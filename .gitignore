@@ -1,0 +1,13 @@
+# deps & build output
+node_modules/
+.next/
+*.tsbuildinfo
+
+# secrets — never commit (see README: env vars & keystore backup)
+.env
+.env.*
+
+# local noise
+*.log
+.DS_Store
+data/

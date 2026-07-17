@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "Crixo",
+    "slug": "Crixo",
+    "scheme": "crixo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF9F0"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tejas26.crixo"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFB86B",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.tejas26.crixo"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Crixo uses your location to show live cricket matches happening near you and to let people nearby discover your match. It is only used while the app is open."
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
+        }
+      ],
+      "expo-build-properties"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "15e27bf5-e1b5-4ad8-9a9a-240c71605009"
+      }
+    },
+    "owner": "tejas26"
+  }
+}

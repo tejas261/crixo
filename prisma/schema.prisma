@@ -1,0 +1,139 @@
+// Prisma schema mapping the existing event-sourced tables:
+//   matches(id, admin_key, config, created_at) — one row per match
+//   events(match_id, seq, event)               — the append-only event log
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DB_URL")
+}
+
+model Match {
+  id        String       @id
+  adminKey  String       @map("admin_key")
+  config    Json
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Optional creation coordinates (v12): power the "nearby" dashboard list.
+  // Never exposed raw in any API response — only derived distances are.
+  lat       Float?
+  lng       Float?
+  // Nullable: legacy matches predate accounts. New matches record the
+  // creating account so the dashboard can list "my matches".
+  accountId String?      @map("account_id")
+  account   Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  events    Event[]
+  grants    AdminGrant[]
+
+  @@map("matches")
+}
+
+// ---------------------------------------------------------------------------
+// Accounts, credits, auth, payments (v11 monetization)
+// ---------------------------------------------------------------------------
+
+// One account per anonymous browser/device session until a Google identity
+// is linked. `ip` is recorded at creation for the signup-grant velocity
+// check only.
+model Account {
+  id        String         @id @default(cuid())
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  ip        String?
+  googleSub String?        @unique @map("google_sub")
+  email     String?
+  // Google profile, refreshed on every sign-in (photo URLs rotate).
+  name      String?
+  picture   String?
+  // v12: one-time "remove ads" purchase flips this; free accounts see ads.
+  adFree    Boolean        @default(false) @map("ad_free")
+  sessions  Session[]
+  ledger    CreditLedger[]
+  matches   Match[]
+  orders    PaymentOrder[]
+  linkCodes LinkCode[]
+
+  @@map("accounts")
+}
+
+// Maps a crixo_session token (cookie or mobile bearer) to its account.
+// Distinct from admin_grants, which carries per-match scoring rights and is
+// keyed by the same token value — signing in repoints THIS row, so scoring
+// grants stay with the token.
+model Session {
+  token     String   @id
+  accountId String   @map("account_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("account_sessions")
+}
+
+// Append-only credit ledger; balance = SUM(delta). idempotencyKey's unique
+// constraint is what makes spend/refund/purchase writes exactly-once.
+model CreditLedger {
+  id             String   @id @default(cuid())
+  accountId      String   @map("account_id")
+  delta          Int
+  reason         String
+  refId          String?  @map("ref_id")
+  idempotencyKey String?  @unique @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("credit_ledger")
+}
+
+// Device-link codes: a signed-out device (the mobile app) mints a code, the
+// user completes Google OAuth in a browser carrying the code, and the
+// callback links the Google identity to the CODE's account instead of the
+// browser's. Single-use (usedAt) with a 10-minute expiry.
+model LinkCode {
+  code      String    @id
+  accountId String    @map("account_id")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("link_codes")
+}
+
+// Razorpay orders; id IS the razorpay order id. status: 'created' | 'paid'.
+model PaymentOrder {
+  id         String   @id
+  accountId  String   @map("account_id")
+  packId     String   @map("pack_id")
+  credits    Int
+  amountPaise Int     @map("amount_paise")
+  status     String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("payment_orders")
+}
+
+// Session-cookie scoring grants: a browser session token that has proven it
+// may score a given match (created the match, or claimed with the admin key).
+model AdminGrant {
+  token     String
+  matchId   String   @map("match_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([token, matchId])
+  @@map("admin_grants")
+}
+
+model Event {
+  matchId String @map("match_id")
+  seq     Int
+  event   Json
+  match   Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([matchId, seq])
+  @@map("events")
+}

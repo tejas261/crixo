@@ -1,0 +1,26 @@
+{
+  "name": "crixo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "tsx --test \"test/*.test.ts\"",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6",
+    "next": "^15.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "^19",
+    "prisma": "^6",
+    "tsx": "^4",
+    "typescript": "5.8.2"
+  }
+}
