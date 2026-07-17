@@ -173,3 +173,18 @@ If banner test ads don't appear but logcat shows the SDK requesting them with
 `ERR_CONNECTION_REFUSED`, the network is blocking ad servers (DNS ad-blocker) — try mobile data.
 
 ANDROID_HOME is `~/Library/Android/sdk` (command-line tools install, licenses accepted).
+
+## OTA updates (EAS Update)
+
+JS/asset changes ship over the air — no APK reinstalls:
+
+```bash
+cd mobile
+npx eas-cli update --branch production --environment production --message "what changed"
+```
+
+Installed apps fetch on launch and apply on the next restart. Native changes
+(new native modules, icons, permissions) still need a rebuilt APK: bump BOTH
+`expo.version` AND `expo.runtimeVersion` in app.json (bare workflow = literal
+runtime version, keep them in lockstep), rebuild, redistribute. Updates only
+reach binaries whose baked-in runtime version matches the published one.

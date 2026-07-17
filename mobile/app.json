@@ -24,9 +24,6 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.tejas26.crixo"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
     "plugins": [
       "expo-router",
       "expo-secure-store",
@@ -53,6 +50,17 @@
         "projectId": "15e27bf5-e1b5-4ad8-9a9a-240c71605009"
       }
     },
-    "owner": "tejas26"
+    "owner": "tejas26",
+    "updates": {
+      "url": "https://u.expo.dev/15e27bf5-e1b5-4ad8-9a9a-240c71605009",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "runtimeVersion": "1.0.0",
+    "platforms": [
+      "ios",
+      "android"
+    ]
   }
 }
