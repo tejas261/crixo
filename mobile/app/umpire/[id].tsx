@@ -30,6 +30,7 @@ import Avatar, { type AvatarRole } from '../../src/components/Avatar';
 import Sheet, { SheetSub, SheetTitle } from '../../src/components/Sheet';
 import BreakTimer from '../../src/components/BreakTimer';
 import TossLine from '../../src/components/TossLine';
+import RematchButton from '../../src/components/RematchButton';
 import { toast } from '../../src/components/Toast';
 import { Btn, Hint, Input, Panel, PanelTitle, SheetSectionLabel } from '../../src/components/ui';
 import { colors, fonts, radius, shadowSm } from '../../src/theme';
@@ -271,6 +272,9 @@ export default function UmpireScreen() {
             title="View summary" variant="primary"
             onPress={() => { setCompletedDismissed(true); router.push(`/summary/${matchId}`); }}
           />
+          <View style={{ marginTop: 8 }}>
+            <RematchButton state={state} />
+          </View>
           <View style={{ marginTop: 8 }}>
             <Btn title="Share summary" onPress={shareSummary} />
           </View>

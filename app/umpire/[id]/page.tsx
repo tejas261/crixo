@@ -19,6 +19,7 @@ import OverStrip from '@/components/OverStrip';
 import Sheet from '@/components/Sheet';
 import BreakTimer from '@/components/BreakTimer';
 import TossLine from '@/components/TossLine';
+import RematchButton from '@/components/RematchButton';
 import type {
   BallEvent,
   BallExtra,
@@ -95,6 +96,10 @@ export default function UmpirePage() {
   useEffect(() => {
     if (!matchId) return;
     let cancelled = false;
+    // A rematch pushes a new id onto this same route, so per-match UI state
+    // must reset here (the component instance survives the navigation).
+    setCompletedDismissed(false);
+    setKeyFallback(null);
     fetchJSON<RoleResponse>(`/api/matches/${matchId}/role`)
       .then((role) => {
         if (cancelled) return;
@@ -274,6 +279,7 @@ export default function UmpirePage() {
       return (
         <CompletedSheet
           key={sheetKey}
+          state={state}
           resultText={state.result?.text || ''}
           matchId={matchId}
           scorer={scorer}
@@ -556,6 +562,7 @@ function PickButton({ name, role, pressed = false, disabled = false, note = null
 // ---------- Sheets ----------
 
 interface CompletedSheetProps {
+  state: PublicState;
   resultText: string;
   matchId: string;
   scorer: boolean;
@@ -565,7 +572,7 @@ interface CompletedSheetProps {
   onUndo: () => void;
 }
 
-function CompletedSheet({ resultText, matchId, scorer, adminKey, onShare, onClose, onUndo }: CompletedSheetProps) {
+function CompletedSheet({ state, resultText, matchId, scorer, adminKey, onShare, onClose, onUndo }: CompletedSheetProps) {
   return (
     <>
       <h2>Match over</h2>
@@ -577,6 +584,9 @@ function CompletedSheet({ resultText, matchId, scorer, adminKey, onShare, onClos
       >
         View summary
       </a>
+      <div style={{ marginTop: 8 }}>
+        <RematchButton state={state} block />
+      </div>
       <button className="btn btn-block" style={{ marginTop: 8 }} onClick={onShare}>
         Share summary
       </button>

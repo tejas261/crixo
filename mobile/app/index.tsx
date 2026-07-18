@@ -35,35 +35,9 @@ import { PageBackground, SiteHeader } from '../src/components/Screen';
 import { Btn, EmptyState, FieldLabel, Hint, Input, Panel, PanelTitle } from '../src/components/ui';
 import { colors, fonts, radius } from '../src/theme';
 import type { MatchListItem, MatchLists } from '../src/types';
-
-// ---------- location (lazy expo-location) ----------
-
-// expo-location is required lazily for the same reason as the ads module
-// (see src/components/AdBanner.tsx): it's a native module that isn't inside
-// dev builds made before it was added. Missing module → the nearby feature
-// quietly reports itself unavailable instead of crashing the screen.
-type LocationModule = typeof import('expo-location');
-let locationModule: LocationModule | null | undefined;
-function getLocationModule(): LocationModule | null {
-  if (locationModule === undefined) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      locationModule = require('expo-location') as LocationModule;
-    } catch {
-      locationModule = null;
-    }
-  }
-  return locationModule;
-}
-
-type LocPerm =
-  | 'unknown'      // still checking
-  | 'undetermined' // never asked — show the soft-ask card
-  | 'granted'
-  | 'denied'
-  | 'unavailable'; // native module missing (older dev build)
-
-type Coords = { lat: number; lng: number };
+// Location plumbing (lazy expo-location require + best-effort creation
+// coordinates) lives in src/location.ts, shared with the Rematch buttons.
+import { creationLocation, getLocationModule, type Coords, type LocPerm } from '../src/location';
 
 export default function HomeScreen() {
   const [teamA, setTeamA] = useState('');
@@ -192,35 +166,6 @@ export default function HomeScreen() {
   const formReady = missing.length === 0;
   const readyHint = `To start: ${missing.join(', ')}.`;
 
-  // Best-effort creation coordinates. If permission was never granted, ask
-  // right here — the moment of intent — then take whatever position arrives
-  // quickly: coords already in hand, else the cached last-known position,
-  // else a fresh fix capped at ~4s. Denied, unavailable, or slow → create
-  // WITHOUT location. Never throws — location must not block or break
-  // match creation.
-  async function creationLocation(): Promise<Coords | undefined> {
-    const Location = getLocationModule();
-    if (!Location) return undefined;
-    try {
-      if (locPerm !== 'granted') {
-        // Safe even in the 'denied' state: the OS resolves it immediately
-        // (granted: false) without re-prompting when it can't ask again.
-        const perm = await Location.requestForegroundPermissionsAsync();
-        setLocPerm(perm.granted ? 'granted' : perm.canAskAgain ? 'undetermined' : 'denied');
-        if (!perm.granted) return undefined;
-      }
-      if (coords) return coords;
-      const last = await Location.getLastKnownPositionAsync();
-      if (last) return { lat: last.coords.latitude, lng: last.coords.longitude };
-      const pos = await Promise.race([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-        new Promise<null>((resolve) => { setTimeout(() => resolve(null), 4000); }),
-      ]);
-      if (pos) return { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    } catch { /* create without location */ }
-    return undefined;
-  }
-
   async function onSubmit() {
     if (!formReady || submitting) return;
     Keyboard.dismiss();
@@ -234,7 +179,13 @@ export default function HomeScreen() {
       oversPerInnings: oversNum,
       battingFirstIndex: (battingFirst === 'toss' ? 0 : battingFirst) as 0 | 1,
       commonPlayer: common || null,
-      location: await creationLocation(),
+      // Best-effort coordinates (see src/location.ts) — may ask for
+      // permission right here, at the moment of intent.
+      location: await creationLocation({
+        coords,
+        granted: locPerm === 'granted',
+        onPermChange: setLocPerm,
+      }),
     };
     setSubmitting(true);
     try {

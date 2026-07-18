@@ -15,6 +15,7 @@ import { fmtOvers, fmtSR, fmtEcon, teamsLine } from '@/lib/format';
 import { shareOrCopy } from '@/lib/share';
 import Avatar, { TrophyMark, type AvatarRole } from '@/components/Avatar';
 import TossLine from '@/components/TossLine';
+import RematchButton from '@/components/RematchButton';
 import type { PublicBatsman, PublicBowler, PublicInnings, PublicState } from '@/lib/engine';
 
 // "Innings break · Xm Ys" — only when the backend recorded a duration.
@@ -95,6 +96,9 @@ function ResultBanner({ state, error, matchId }: ResultBannerProps) {
       <div className="result-banner">
         <TrophyMark />
         <div className="result-text">{state.result.text}</div>
+        {/* Only a completed match offers a rematch (the component itself
+            renders nothing for other states carrying a result). */}
+        <RematchButton state={state} />
       </div>
     );
   }

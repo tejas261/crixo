@@ -10,6 +10,7 @@ import AdBanner from '../../src/components/AdBanner';
 import { PageBackground, SiteHeader } from '../../src/components/Screen';
 import Avatar, { TrophyMark, type AvatarRole } from '../../src/components/Avatar';
 import TossLine, { BothChip } from '../../src/components/TossLine';
+import RematchButton from '../../src/components/RematchButton';
 import { Btn, EmptyState, Hint, Panel, PanelTitle, SheetSectionLabel } from '../../src/components/ui';
 import { colors, fonts, radius, shadowSm } from '../../src/theme';
 import type { PublicBatsman, PublicBowler, PublicInnings, PublicState } from '../../src/types';
@@ -95,6 +96,9 @@ function ResultBanner({ state, error, matchId }: {
       <View style={styles.resultBanner}>
         <TrophyMark />
         <Text style={styles.resultText}>{state.result.text}</Text>
+        {/* Only a completed match offers a rematch (the component itself
+            renders nothing for other states carrying a result). */}
+        <RematchButton state={state} />
       </View>
     );
   }
