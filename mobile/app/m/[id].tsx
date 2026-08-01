@@ -18,7 +18,7 @@ import TimelineRow from '../../src/components/Timeline';
 import StatusChip from '../../src/components/StatusChip';
 import BreakTimer from '../../src/components/BreakTimer';
 import TossLine from '../../src/components/TossLine';
-import { Btn, Hint, Panel, PanelTitle } from '../../src/components/ui';
+import { BoomPill, Btn, Hint, Panel, PanelTitle } from '../../src/components/ui';
 import { colors, fonts, radius, shadowSm } from '../../src/theme';
 import type { TimelineEntry } from '../../src/types';
 
@@ -42,18 +42,28 @@ export default function LiveScreen() {
         </Text>
       );
     }
+    // Boom state on the context line for everyone; the penalty tally keeps
+    // the headline total reconcilable with the cards.
+    const boomBits = (
+      <>
+        {state.status === 'live' && i.boomActive && (
+          <Text style={styles.contextStrong}> · BOOM ×2, wickets −5</Text>
+        )}
+        {(i.penaltyRuns ?? 0) > 0 && <Text> · boom −{i.penaltyRuns}</Text>}
+      </>
+    );
     if (state.currentInningsIndex === 1 && i.target != null) {
       return (
         <Text style={styles.context}>
           <Text style={styles.contextStrong}>{batTeam}</Text> chasing {i.target} — need{' '}
           <Text style={styles.contextStrong}>{i.runsNeeded}</Text> from{' '}
-          <Text style={styles.contextStrong}>{i.ballsRemaining}</Text> · CRR {i.crr} · RRR {i.rrr}
+          <Text style={styles.contextStrong}>{i.ballsRemaining}</Text> · CRR {i.crr} · RRR {i.rrr}{boomBits}
         </Text>
       );
     }
     return (
       <Text style={styles.context}>
-        <Text style={styles.contextStrong}>{batTeam}</Text> batting · CRR {i.crr}
+        <Text style={styles.contextStrong}>{batTeam}</Text> batting · CRR {i.crr}{boomBits}
       </Text>
     );
   }
@@ -94,6 +104,8 @@ export default function LiveScreen() {
         ) : (
           <ScorePlates big runs={0} wickets={0} overs="0.0" />
         )}
+        {/* Boom-boom over in progress: runs double, wickets cost 5. */}
+        {state?.status === 'live' && i?.boomActive && <BoomPill style={{ marginTop: 10 }} />}
         <View style={{ marginTop: 6 }}>{scoreContext()}</View>
       </Panel>
 
@@ -140,6 +152,9 @@ export default function LiveScreen() {
         {x && (
           <Text style={styles.extrasLine}>
             Extras <Text style={styles.extrasStrong}>{x.total}</Text> (wd {x.wides}, nb {x.noballs}, b {x.byes}, lb {x.legbyes})
+            {/* Boom wicket penalties keep the total reconcilable:
+                sum(batsmen) + extras − penalties = runs. */}
+            {(i?.penaltyRuns ?? 0) > 0 ? ` · boom −${i!.penaltyRuns}` : ''}
           </Text>
         )}
         <View style={styles.fowList}>

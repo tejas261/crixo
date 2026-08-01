@@ -213,7 +213,7 @@ async function getMatch(id: unknown): Promise<MatchRecord | null> {
 // ---------------------------------------------------------------------------
 // Validation for match creation
 // ---------------------------------------------------------------------------
-function validateCreateBody(body: unknown): string | null {
+export function validateCreateBody(body: unknown): string | null {
   if (typeof body !== 'object' || body === null) return 'request body must be a JSON object';
   const { teams, oversPerInnings, battingFirstIndex } =
     body as { teams?: unknown; oversPerInnings?: unknown; battingFirstIndex?: unknown };
@@ -238,6 +238,10 @@ function validateCreateBody(body: unknown): string | null {
   const { commonPlayer } = body as { commonPlayer?: unknown };
   if (commonPlayer != null && (typeof commonPlayer !== 'string' || commonPlayer.trim() === '')) {
     return 'commonPlayer must be a non-empty string when provided';
+  }
+  const { boomBoom } = body as { boomBoom?: unknown };
+  if (boomBoom != null && typeof boomBoom !== 'boolean') {
+    return 'boomBoom must be a boolean when provided';
   }
   const { location } = body as { location?: unknown };
   if (location != null) {
@@ -316,6 +320,7 @@ export async function createMatch(
     oversPerInnings: number;
     battingFirstIndex: 0 | 1;
     commonPlayer?: string | null;
+    boomBoom?: boolean | null;
     location?: { lat: number; lng: number } | null;
   };
   const config: MatchConfig = {
@@ -326,6 +331,7 @@ export async function createMatch(
     oversPerInnings: valid.oversPerInnings,
     battingFirstIndex: valid.battingFirstIndex,
     commonPlayer: valid.commonPlayer?.trim() || null,
+    boomBoom: valid.boomBoom === true, // absent/null/false => rule unavailable
   };
 
   let state: MatchState;

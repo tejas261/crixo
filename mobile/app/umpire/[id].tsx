@@ -29,10 +29,10 @@ import OverStrip from '../../src/components/OverStrip';
 import Avatar, { type AvatarRole } from '../../src/components/Avatar';
 import Sheet, { SheetSub, SheetTitle } from '../../src/components/Sheet';
 import BreakTimer from '../../src/components/BreakTimer';
-import TossLine from '../../src/components/TossLine';
+import TossLine, { BothChip } from '../../src/components/TossLine';
 import RematchButton from '../../src/components/RematchButton';
 import { toast } from '../../src/components/Toast';
-import { Btn, Hint, Input, Panel, PanelTitle, SheetSectionLabel } from '../../src/components/ui';
+import { BoomPill, Btn, Hint, Input, Panel, PanelTitle, SheetSectionLabel } from '../../src/components/ui';
 import { colors, fonts, radius, shadowSm } from '../../src/theme';
 import type {
   BallEvent,
@@ -71,6 +71,16 @@ function legalKinds(extra: PadExtra | null): WicketKind[] {
   return WICKET_KINDS.map(([k]) => k);
 }
 
+// A team's ACTIVE roster as {name, playerIndex} pairs — removed (left)
+// players are filtered out but the surviving indexes are the real
+// config.teams[t].players indexes (they never shift; v14 add_player pushes).
+function activePlayers(state: PublicState, teamIndex: number): { p: string; idx: number }[] {
+  const removed = new Set(state.removed?.[teamIndex] ?? []);
+  return state.config.teams[teamIndex].players
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !removed.has(idx));
+}
+
 export default function UmpireScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const matchId = typeof id === 'string' ? id : undefined;
@@ -84,6 +94,7 @@ export default function UmpireScreen() {
 
   const [selectedExtra, setSelectedExtra] = useState<PadExtra | null>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
+  const [squadsOpen, setSquadsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'endInnings' | 'endMatch' | null>(null);
   const [completedDismissed, setCompletedDismissed] = useState(false); // completed sheet shows once, then stays closed
   const [posting, setPosting] = useState(false);
@@ -140,6 +151,16 @@ export default function UmpireScreen() {
     && !needs.openers && !needs.newBatsman && !needs.newBowler && !needs.startInnings;
   const padOk = Boolean(canScore) && !posting;
 
+  // Boom-boom over (v14). Arming is only offered at an over boundary;
+  // legalBalls % 6 === 0 is a heuristic — it can't see an illegal first
+  // delivery (a first-ball wide keeps it 0 mid-over) — so the server's 400
+  // toast is the real gate.
+  const boomArmed = Boolean(state?.config.boomBoom && state.status === 'live' && i?.boomActive);
+  const boomArmable = Boolean(
+    state?.config.boomBoom && state.status === 'live' && scorer
+    && i && !i.boomActive && i.legalBalls % 6 === 0
+  );
+
   // ---------- Sheet key (mirrors the web console's sheetKeyFor) ----------
 
   const sheetKey = useMemo<string | null>(() => {
@@ -148,6 +169,11 @@ export default function UmpireScreen() {
     // accidental end_match, and for read-only visitors.
     if (state.status === 'completed') return completedDismissed ? null : 'completed';
     if (!scorer) return null; // read-only: no action sheets
+    // Squads outranks the needs-driven sheets: it can only be opened from the
+    // pad footer (no sheet up) or from the start-innings sheet's own footer,
+    // and a squad change may itself resolve/raise a `needs` flag — the needs
+    // sheet takes back over the moment squads is dismissed.
+    if (squadsOpen) return 'squads';
     const n: Partial<Needs> = state.needs || {};
     if (n.startInnings) return `start:${state.status}`;
     if (n.openers) return `openers:${state.currentInningsIndex}`;
@@ -156,10 +182,11 @@ export default function UmpireScreen() {
     if (confirmAction) return `confirm:${confirmAction}`;
     if (wicketOpen) return 'wicket';
     return null;
-  }, [state, scorer, completedDismissed, confirmAction, wicketOpen, i]);
+  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, i]);
 
   const dismissHandler = useMemo<(() => void) | undefined>(() => {
     if (sheetKey === 'wicket') return () => setWicketOpen(false);
+    if (sheetKey === 'squads') return () => setSquadsOpen(false);
     if (sheetKey?.startsWith('confirm:')) return () => setConfirmAction(null);
     if (sheetKey === 'completed') return () => setCompletedDismissed(true);
     return undefined;
@@ -206,17 +233,25 @@ export default function UmpireScreen() {
     }
     if (i) {
       const batTeam = state.config.teams[i.battingTeamIndex].name;
+      // Boom state rides on the context line so everyone (read-only included)
+      // sees it; penalties reconcile the total with the batting card sums.
+      const boomBits = (
+        <>
+          {i.boomActive && <Text style={styles.contextStrong}> · BOOM ×2, wickets −5</Text>}
+          {(i.penaltyRuns ?? 0) > 0 && <Text> · boom −{i.penaltyRuns}</Text>}
+        </>
+      );
       if (state.currentInningsIndex === 1 && i.target != null) {
         return (
           <Text style={styles.context}>
             <Text style={styles.contextStrong}>{batTeam}</Text> chasing {i.target} — need{' '}
-            {i.runsNeeded} from {i.ballsRemaining} · CRR {i.crr} · RRR {i.rrr}
+            {i.runsNeeded} from {i.ballsRemaining} · CRR {i.crr} · RRR {i.rrr}{boomBits}
           </Text>
         );
       }
       return (
         <Text style={styles.context}>
-          <Text style={styles.contextStrong}>{batTeam}</Text> batting · first innings · CRR {i.crr}
+          <Text style={styles.contextStrong}>{batTeam}</Text> batting · first innings · CRR {i.crr}{boomBits}
         </Text>
       );
     }
@@ -316,13 +351,19 @@ export default function UmpireScreen() {
               onPress={() => postEvent({ type: 'start_innings' })}
             />
           </View>
-          {/* No toss yet: a quiet detour to the toss page before the first ball. */}
-          {!second && !state.toss ? (
-            <View style={styles.sheetFooter}>
-              <View />
+          {/* Squads stays reachable while this sheet blocks the pad footer
+              (add a latecomer before the innings starts); plus the quiet toss
+              detour before the first ball, or Undo during the break. */}
+          <View style={styles.sheetFooter}>
+            <Btn title="Squads" variant="quiet" onPress={() => setSquadsOpen(true)} />
+            {!second && !state.toss ? (
               <Btn title="Hold the toss" variant="quiet" onPress={() => router.push(`/toss/${matchId}`)} />
-            </View>
-          ) : undoFooter}
+            ) : second && showUndoFooter ? (
+              <Btn title="Undo last ball" variant="quiet" onPress={() => postEvent({ type: 'undo' })} />
+            ) : (
+              <View />
+            )}
+          </View>
         </View>
       );
     }
@@ -364,6 +405,17 @@ export default function UmpireScreen() {
     if (sheetKey.startsWith('newBowler:')) {
       return (
         <NewBowlerSheet key={sheetKey} state={state} innings={i!} postEvent={postEvent} undoFooter={undoFooter} />
+      );
+    }
+    if (sheetKey === 'squads') {
+      return (
+        <SquadsSheet
+          key={sheetKey}
+          state={state}
+          postEvent={postEvent}
+          posting={posting}
+          onClose={() => setSquadsOpen(false)}
+        />
       );
     }
     if (sheetKey === 'wicket') {
@@ -466,6 +518,32 @@ export default function UmpireScreen() {
 
         {/* Fixed one-thumb pad */}
         <View style={[styles.pad, { paddingBottom: 10 + insets.bottom }]}>
+          {/* Boom-boom slot above the pad: arm chip at an over boundary,
+              pulsing BOOM pill (+ cancel) while armed. */}
+          {boomArmable && (
+            <View style={styles.boomRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: posting }}
+                disabled={posting}
+                onPress={() => postEvent({ type: 'boom_over', enabled: true })}
+                style={[styles.boomArmChip, posting && styles.disabled]}
+              >
+                <Text style={styles.boomArmText}>Boom-boom this over</Text>
+              </Pressable>
+            </View>
+          )}
+          {boomArmed && (
+            <View style={[styles.boomRow, { justifyContent: 'space-between' }]}>
+              <BoomPill />
+              {scorer && (
+                <Btn
+                  title="Cancel" variant="quiet" disabled={posting}
+                  onPress={() => postEvent({ type: 'boom_over', enabled: false })}
+                />
+              )}
+            </View>
+          )}
           <View style={styles.runGrid}>
             {[0, 1, 2, 3, 4, 6].map((r) => (
               <RunButton key={r} runs={r} disabled={!padOk} onPress={() => padTapBall(r)} />
@@ -504,6 +582,11 @@ export default function UmpireScreen() {
             />
           </View>
           <View style={styles.padFooter}>
+            <Btn
+              title="Squads" variant="quiet"
+              disabled={!scorer || !state || state.status === 'completed'}
+              onPress={() => setSquadsOpen(true)}
+            />
             <Btn
               title="End innings" variant="quiet"
               disabled={!scorer || posting || state?.status !== 'live'}
@@ -641,8 +724,9 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
   const [nonStriker, setNonStriker] = useState<number | null>(null);
   const [bowler, setBowler] = useState<number | null>(null);
 
-  const bat = state.config.teams[innings.battingTeamIndex].players;
-  const bowl = state.config.teams[1 - innings.battingTeamIndex].players;
+  // Removed (left) players are not selectable — the engine rejects them.
+  const bat = activePlayers(state, innings.battingTeamIndex);
+  const bowl = activePlayers(state, 1 - innings.battingTeamIndex);
 
   async function confirm() {
     // Snapshot the picks first: the sheet may unmount mid-sequence as `needs`
@@ -659,7 +743,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       <SheetSub>Choose the two opening batsmen and the opening bowler.</SheetSub>
       <SheetSectionLabel>On strike</SheetSectionLabel>
       <View style={styles.pickList}>
-        {bat.map((p, idx) => (
+        {bat.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="batsman"
             pressed={striker === idx}
@@ -670,7 +754,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       </View>
       <SheetSectionLabel>Non-striker</SheetSectionLabel>
       <View style={styles.pickList}>
-        {bat.map((p, idx) => (
+        {bat.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="batsman"
             pressed={nonStriker === idx}
@@ -681,7 +765,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       </View>
       <SheetSectionLabel>Opening bowler</SheetSectionLabel>
       <View style={styles.pickList}>
-        {bowl.map((p, idx) => (
+        {bowl.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="bowler"
             pressed={bowler === idx}
@@ -709,9 +793,10 @@ interface NewPlayerSheetProps {
 }
 
 function NewBatsmanSheet({ state, innings, postEvent, undoFooter }: NewPlayerSheetProps) {
-  const bat = state.config.teams[innings.battingTeamIndex].players;
+  // Eligible = still in the squad (not removed) and hasn't batted this innings.
   const used = new Set(innings.batsmen.map((b) => b.playerIndex));
-  const eligible = bat.map((p, idx) => ({ p, idx })).filter(({ idx }) => !used.has(idx));
+  const eligible = activePlayers(state, innings.battingTeamIndex)
+    .filter(({ idx }) => !used.has(idx));
   return (
     <View>
       <SheetTitle>New batsman</SheetTitle>
@@ -734,7 +819,8 @@ function NewBatsmanSheet({ state, innings, postEvent, undoFooter }: NewPlayerShe
 }
 
 function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerSheetProps) {
-  const bowl = state.config.teams[1 - innings.battingTeamIndex].players;
+  // Removed (left) players are excluded; the engine also guards this.
+  const bowl = activePlayers(state, 1 - innings.battingTeamIndex);
   // currentBowlerIndex is null at over end; the engine exposes the last
   // completed over's bowler separately so we can disable them here.
   const prev = innings.lastOverBowlerPlayerIndex ?? null;
@@ -743,7 +829,7 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
       <SheetTitle>New bowler</SheetTitle>
       <SheetSub>Pick who bowls the next over.</SheetSub>
       <View style={styles.pickList}>
-        {bowl.map((p, idx) => (
+        {bowl.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="bowler"
             disabled={idx === prev}
@@ -753,6 +839,132 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
         ))}
       </View>
       {undoFooter}
+    </View>
+  );
+}
+
+// ---------- Squads sheet (v14 mid-match squad changes) ----------
+
+interface SquadsSheetProps {
+  state: PublicState;
+  postEvent: PostEvent;
+  posting: boolean;
+  onClose: () => void;
+}
+
+// Both squads, stacked. The remove affordance mirrors the engine guards so
+// it never shows when the server would refuse (at the crease, batted this
+// innings, bowling right now, last 2 active), but the SERVER stays the
+// authority — a rejected event's 400 message surfaces as a toast via
+// postEvent.
+function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
+  return (
+    <View>
+      <SheetTitle>Squads</SheetTitle>
+      <SheetSub>Add latecomers, or remove players who left — their scorecard entries stay.</SheetSub>
+      {([0, 1] as const).map((t) => (
+        <SquadTeam key={t} state={state} teamIndex={t} postEvent={postEvent} posting={posting} />
+      ))}
+      <View style={styles.sheetFooter}>
+        <View />
+        <Btn title="Close" variant="quiet" onPress={onClose} />
+      </View>
+    </View>
+  );
+}
+
+function SquadTeam({ state, teamIndex, postEvent, posting }: {
+  state: PublicState;
+  teamIndex: 0 | 1;
+  postEvent: PostEvent;
+  posting: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+  const team = state.config.teams[teamIndex];
+  const removed = new Set(state.removed?.[teamIndex] ?? []);
+  const activeCount = team.players.length - removed.size;
+
+  // Live-innings guards only apply while an innings is actually in progress
+  // (during setup / innings break the engine allows removing anyone, down to
+  // the 2-active floor).
+  const live = state.status === 'live' && state.currentInningsIndex != null
+    ? state.innings[state.currentInningsIndex]
+    : null;
+  const batting = live != null && live.battingTeamIndex === teamIndex;
+  const currentBowlerPlayer = live != null && !batting && live.currentBowlerIndex != null
+    ? live.bowlers[live.currentBowlerIndex].playerIndex
+    : null;
+
+  const clean = draft.trim().replace(/\s+/g, ' ');
+  const full = activeCount >= 11;
+
+  async function add() {
+    if (!clean || full) return;
+    // The engine trims/collapses too and rejects active-name duplicates —
+    // any 400 surfaces as a toast; the draft survives for a quick fix.
+    if (await postEvent({ type: 'add_player', teamIndex, name: clean })) setDraft('');
+  }
+
+  return (
+    <View style={styles.squadTeam}>
+      <View style={styles.squadHead}>
+        <Text style={styles.squadName} numberOfLines={1}>{team.name}</Text>
+        <Text style={styles.squadCount}>{activeCount} active</Text>
+      </View>
+      {team.players.map((p, idx) => {
+        const left = removed.has(idx);
+        // A batsmen entry in the CURRENT innings (out or at the crease)
+        // blocks removal until the innings ends — same rule as the engine.
+        const entry = !left && batting ? live!.batsmen.find((b) => b.playerIndex === idx) : undefined;
+        const atCrease = entry != null && entry.out == null;
+        const bowling = currentBowlerPlayer === idx;
+        const tag = left ? 'left'
+          : atCrease ? 'at crease'
+            : entry != null ? 'out'
+              : bowling ? 'bowling'
+                : null;
+        const removable = !left && activeCount > 2 && entry == null && !bowling;
+        return (
+          <View key={idx} style={[styles.squadRow, left && styles.squadRowLeft]}>
+            <Avatar name={p} role={batting ? 'batsman' : 'bowler'} size={26} />
+            <Text style={styles.squadPlayer} numberOfLines={1}>{p}</Text>
+            {state.config.commonPlayer != null && p === state.config.commonPlayer && !left && (
+              <BothChip />
+            )}
+            {tag != null && (
+              <Text style={[styles.squadTag, (atCrease || bowling) && styles.squadTagOn]}>
+                {tag}
+              </Text>
+            )}
+            {removable && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${p} from ${team.name}`}
+                disabled={posting}
+                onPress={() => postEvent({ type: 'remove_player', teamIndex, playerIndex: idx })}
+                style={styles.squadX}
+              >
+                <Text style={styles.squadXText}>×</Text>
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
+      <View style={[styles.rowGap, { marginTop: 8 }]}>
+        <Input
+          placeholder="Add a player"
+          value={draft}
+          onChangeText={setDraft}
+          onSubmitEditing={add}
+          editable={!full}
+          maxLength={40}
+          autoCorrect={false}
+          returnKeyType="done"
+          style={{ flex: 1 }}
+        />
+        <Btn title="Add" onPress={add} disabled={!clean || full || posting} small />
+      </View>
+      {full && <Hint style={{ marginTop: 6 }}>Squad is full — 11 active players.</Hint>}
     </View>
   );
 }
@@ -929,6 +1141,27 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
+  // Boom-boom slot above the run grid.
+  boomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  boomArmChip: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.apricotDeep,
+    backgroundColor: '#FFF3E6', // pre-blended apricot tint (see btnToggled in ui.tsx)
+    alignItems: 'center',
+  },
+  boomArmText: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    color: colors.apricotInk,
+  },
   runBtn: {
     flexBasis: '31%',
     flexGrow: 1,
@@ -1020,6 +1253,45 @@ const styles = StyleSheet.create({
   pickText: { fontSize: 14, color: colors.text },
   pickTextOn: { color: colors.apricotInk },
   pickNote: { fontSize: 11, color: colors.muted },
+
+  // Squads sheet.
+  squadTeam: { marginTop: 14 },
+  squadHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: 6,
+  },
+  squadName: { flexShrink: 1, fontSize: 14, fontWeight: '600', color: colors.text },
+  squadCount: { fontFamily: fonts.mono, fontSize: 11, color: colors.muted },
+  squadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(240, 226, 204, 0.6)',
+  },
+  squadRowLeft: { opacity: 0.45 },
+  squadPlayer: { flex: 1, fontSize: 14, color: colors.text },
+  squadTag: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    color: colors.muted,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  squadTagOn: {
+    color: colors.apricotInk,
+    borderColor: colors.apricotDeep,
+  },
+  squadX: { paddingHorizontal: 8, paddingVertical: 2 },
+  squadXText: { fontSize: 18, color: colors.muted, lineHeight: 20 },
 
   keyRow: {
     flexDirection: 'row',

@@ -34,6 +34,8 @@ export default function RematchButton({ state }: { state: PublicState }) {
         // so this is a true swap of who bats first.
         battingFirstIndex: (1 - cfg.battingFirstIndex) as 0 | 1,
         commonPlayer: cfg.commonPlayer ?? null,
+        // Same rules too: a boom-boom match rematches as a boom-boom match.
+        boomBoom: cfg.boomBoom ?? false,
         // Best-effort coordinates (see src/location.ts) — may ask for
         // permission right here, at the moment of intent.
         location: await creationLocation(),

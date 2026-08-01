@@ -13,7 +13,7 @@ export default function OverStrip({ innings }: { innings: PublicInnings | null |
   }
   return (
     <View style={styles.strip}>
-      {entries.map((e, idx) => <Badge key={idx} badge={e.badge} />)}
+      {entries.map((e, idx) => <Badge key={idx} badge={e.badge} boom={e.boom} />)}
     </View>
   );
 }

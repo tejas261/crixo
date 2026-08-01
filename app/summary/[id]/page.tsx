@@ -264,6 +264,19 @@ function InningsSection({ state, innings, index }: InningsSectionProps) {
   const oversText = innings.oversDisplay ?? fmtOvers(innings.legalBalls);
   const batted = new Set(innings.batsmen.map((b) => b.playerIndex));
   const dnb = team.players.filter((_, pi) => !batted.has(pi));
+  // Boom-boom summary line: completed boom overs (1-based for humans) and the
+  // total wicket penalties. Either can exist alone — an innings that closed
+  // mid-boom-over keeps its penalties without recording the partial over.
+  const boomOvers = innings.boomOvers ?? [];
+  const boomParts: string[] = [];
+  if (boomOvers.length > 0) {
+    boomParts.push(`Boom overs: ${boomOvers.map((n) => `#${n + 1}`).join(', ')}`);
+  }
+  if (innings.penaltyRuns > 0) {
+    boomParts.push(boomOvers.length > 0
+      ? `penalties −${innings.penaltyRuns}`
+      : `Boom penalties −${innings.penaltyRuns}`);
+  }
   return (
     <section className="panel">
       <h2 className="panel-title panel-title--row">
@@ -272,9 +285,13 @@ function InningsSection({ state, innings, index }: InningsSectionProps) {
           {innings.runs}/{innings.wickets} ({oversText})
         </span>
       </h2>
+      {boomParts.length > 0 && (
+        <p className="boom-line">{boomParts.join(' · ')}</p>
+      )}
       <BattingTable innings={innings} commonName={state.config.commonPlayer ?? null} />
       <p className="extras-line extras-line--summary">
-        Extras {x.total} (wd {x.wides}, nb {x.noballs}, b {x.byes}, lb {x.legbyes}) · Total{' '}
+        Extras {x.total} (wd {x.wides}, nb {x.noballs}, b {x.byes}, lb {x.legbyes})
+        {innings.penaltyRuns > 0 && <> · boom −{innings.penaltyRuns}</>} · Total{' '}
         <strong>{innings.runs}/{innings.wickets}</strong> in {oversText} overs
       </p>
       {dnb.length > 0 && (

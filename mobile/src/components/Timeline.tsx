@@ -10,7 +10,7 @@ export default function TimelineRow({ entry }: { entry: TimelineEntry }) {
   return (
     <View style={styles.row}>
       <Text style={styles.over}>{entry.over}</Text>
-      <Badge badge={entry.badge} />
+      <Badge badge={entry.badge} boom={entry.boom} />
       <Text style={styles.text}>{entry.text}</Text>
     </View>
   );

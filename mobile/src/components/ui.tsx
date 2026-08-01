@@ -1,9 +1,10 @@
 // Small shared UI kit — panels, buttons, chips, labels — porting the web
 // design system's .panel / .btn / .chip / .field-label styles.
 
-import { type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, fonts, GRAD, GRAD_END, GRAD_START, radius, shadow, shadowSm } from '../theme';
+import { useReducedMotion } from '../useReducedMotion';
 
 export function Panel({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.panel, style]}>{children}</View>;
@@ -145,6 +147,35 @@ export function FieldLabel({ children }: { children: ReactNode }) {
 
 export function SheetSectionLabel({ children }: { children: ReactNode }) {
   return <Text style={styles.sheetSectionLabel}>{children}</Text>;
+}
+
+// "BOOM ×2 · wickets −5" — THE gradient pill shown while a boom-boom over is
+// armed (umpire console + live viewer). Gentle opacity pulse; reduced motion
+// gets a steady pill.
+export function BoomPill({ style }: { style?: StyleProp<ViewStyle> }) {
+  const reduced = useReducedMotion();
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (reduced) {
+      pulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.72, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [reduced, pulse]);
+  return (
+    <Animated.View style={[styles.boomPillWrap, { opacity: pulse }, style]}>
+      <LinearGradient colors={GRAD} start={GRAD_START} end={GRAD_END} style={styles.boomPill}>
+        <Text style={styles.boomPillText}>BOOM ×2 · wickets −5</Text>
+      </LinearGradient>
+    </Animated.View>
+  );
 }
 
 export function Input(props: TextInputProps) {
@@ -280,6 +311,24 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 14,
     marginBottom: 6,
+  },
+  boomPillWrap: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    overflow: 'hidden',
+    ...shadowSm,
+  },
+  boomPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boomPillText: {
+    fontFamily: fonts.monoBold,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    color: colors.ink,
   },
   input: {
     backgroundColor: colors.bg,

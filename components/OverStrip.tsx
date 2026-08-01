@@ -29,7 +29,7 @@ export default function OverStrip({ innings }: OverStripProps) {
         return (
           <span
             key={idx}
-            className={`${badgeClass(e.badge)}${roll ? ' roll' : ''}`}
+            className={`${badgeClass(e.badge)}${e.boom ? ' badge-boom' : ''}${roll ? ' roll' : ''}`}
             title={e.text}
           >
             {e.badge}

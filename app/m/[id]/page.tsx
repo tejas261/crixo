@@ -65,15 +65,23 @@ export default function LivePage() {
       const chaseTeam = state.config.teams[1 - i.battingTeamIndex].name;
       return <>Innings break — <strong>{chaseTeam}</strong> need {i.runs + 1} to win.</>;
     }
+    // Boom state on the context line for everyone; the penalty tally keeps the
+    // headline total reconcilable with the cards.
+    const boomBits = (
+      <>
+        {state.status === 'live' && i.boomActive && <> · <strong>BOOM ×2, wickets −5</strong></>}
+        {i.penaltyRuns > 0 && <> · boom −{i.penaltyRuns}</>}
+      </>
+    );
     if (state.currentInningsIndex === 1 && i.target != null) {
       return (
         <>
           <strong>{batTeam}</strong> chasing {i.target} — need <strong>{i.runsNeeded}</strong> from{' '}
-          <strong>{i.ballsRemaining}</strong> · CRR {i.crr} · RRR {i.rrr}
+          <strong>{i.ballsRemaining}</strong> · CRR {i.crr} · RRR {i.rrr}{boomBits}
         </>
       );
     }
-    return <><strong>{batTeam}</strong> batting · CRR {i.crr}</>;
+    return <><strong>{batTeam}</strong> batting · CRR {i.crr}{boomBits}</>;
   }
 
   // Never blank: explain what is (or isn't) happening.
@@ -121,6 +129,13 @@ export default function LivePage() {
             className={`celebrate${burst.kind === 'W' ? ' celebrate--w' : ''}`}
             aria-hidden="true"
           />
+        )}
+        {/* Boom-boom over in progress: viewers feel it — THE gradient, pulsing,
+            right by the plates. */}
+        {state?.status === 'live' && i?.boomActive && (
+          <div className="boom-pill boom-pill--viewer" role="status">
+            BOOM ×2 · wickets −5
+          </div>
         )}
         {i ? (
           <ScorePlates
@@ -181,7 +196,10 @@ export default function LivePage() {
       <section className="panel">
         <h2 className="panel-title">Innings</h2>
         <div className="extras-line" style={{ marginBottom: 10 }}>
-          {x ? `Extras ${x.total} (wd ${x.wides}, nb ${x.noballs}, b ${x.byes}, lb ${x.legbyes})` : ''}
+          {x
+            ? `Extras ${x.total} (wd ${x.wides}, nb ${x.noballs}, b ${x.byes}, lb ${x.legbyes})`
+              + (i != null && i.penaltyRuns > 0 ? ` · boom −${i.penaltyRuns}` : '')
+            : ''}
         </div>
         <div className="fow-list">
           {!i ? (

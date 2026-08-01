@@ -150,6 +150,9 @@ export interface CreateMatchBody {
   oversPerInnings: number;
   battingFirstIndex: 0 | 1;
   commonPlayer: string | null;
+  // Enables the boom-boom over rule for this match (the console can then arm
+  // any over: runs double, wickets cost 5). Absent = off.
+  boomBoom?: boolean;
   // Optional creation coordinates — with these the match shows up in the
   // "Live nearby" list of people within 500m. Never required.
   location?: { lat: number; lng: number };

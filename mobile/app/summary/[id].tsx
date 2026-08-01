@@ -248,6 +248,25 @@ function BowlingTable({ innings, commonName }: { innings: PublicInnings; commonN
   );
 }
 
+// "Boom overs: #4, #7 · penalties −10" — 1-based over numbers of the innings'
+// completed boom-boom overs (v14) and the total wicket penalties. Either can
+// exist alone — an innings that closed mid-boom-over keeps its penalties
+// without recording the partial over. Renders nothing when the rule never
+// fired.
+function BoomLine({ innings }: { innings: PublicInnings }) {
+  const boomOvers = innings.boomOvers ?? [];
+  const penalties = innings.penaltyRuns ?? 0;
+  const parts: string[] = [];
+  if (boomOvers.length > 0) {
+    parts.push(`Boom overs: ${boomOvers.map((n) => `#${n + 1}`).join(', ')}`);
+  }
+  if (penalties > 0) {
+    parts.push(boomOvers.length > 0 ? `penalties −${penalties}` : `Boom penalties −${penalties}`);
+  }
+  if (!parts.length) return null;
+  return <Text style={styles.boomLine}>{parts.join(' · ')}</Text>;
+}
+
 function InningsSection({ state, innings, index }: {
   state: PublicState;
   innings: PublicInnings;
@@ -264,9 +283,11 @@ function InningsSection({ state, innings, index }: {
       <PanelTitle right={`${innings.runs}/${innings.wickets} (${oversText})`}>
         {index === 0 ? 'First innings' : 'Second innings'} — {team.name}
       </PanelTitle>
+      <BoomLine innings={innings} />
       <BattingTable innings={innings} commonName={commonName} />
       <Text style={styles.extrasLine}>
-        Extras {x.total} (wd {x.wides}, nb {x.noballs}, b {x.byes}, lb {x.legbyes}) · Total{' '}
+        Extras {x.total} (wd {x.wides}, nb {x.noballs}, b {x.byes}, lb {x.legbyes})
+        {(innings.penaltyRuns ?? 0) > 0 ? ` · boom −${innings.penaltyRuns}` : ''} · Total{' '}
         <Text style={styles.subStrong}>{innings.runs}/{innings.wickets}</Text> in {oversText} overs
       </Text>
       {dnb.length > 0 && (
@@ -387,6 +408,13 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 10,
     marginBottom: 4,
+  },
+  boomLine: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    color: colors.apricotInk,
+    marginTop: -4,
+    marginBottom: 10,
   },
   fowList: { gap: 4 },
   fowRow: {

@@ -17,6 +17,9 @@ export interface MatchConfig {
    *  sides. Must appear in both teams' player lists; scoring treats them as
    *  a full member of each side — this field only records who they are. */
   commonPlayer?: string | null;
+  /** Availability of the boom-boom over rule (see BoomOverEvent). Absent =
+   *  false: boom_over events are rejected unless this is true. */
+  boomBoom?: boolean;
 }
 
 export type BallExtra = 'none' | 'wide' | 'noball' | 'bye' | 'legbye';
@@ -82,6 +85,37 @@ export interface EndMatchEvent {
   at?: number;
 }
 
+// ---------- Mid-match squad changes (v14) ----------
+
+// Append a player to a team's roster. Valid in setup/live/innings_break.
+// Existing player indexes never shift (the new player is pushed at the end).
+export interface AddPlayerEvent {
+  type: 'add_player';
+  teamIndex: 0 | 1;
+  name: string;
+  at?: number;
+}
+
+// Mark a player unavailable (soft delete — the name stays in config so
+// historical scorecard rows keep resolving). Valid in setup/live/innings_break.
+export interface RemovePlayerEvent {
+  type: 'remove_player';
+  teamIndex: 0 | 1;
+  playerIndex: number;
+  at?: number;
+}
+
+// ---------- Boom-boom over (v14) ----------
+
+// Arm (enabled:true) or disarm (enabled:false) the boom-boom rule for the
+// over about to start. Only valid when config.boomBoom, status 'live', and no
+// delivery (legal or illegal) has been bowled in the current over yet.
+export interface BoomOverEvent {
+  type: 'boom_over';
+  enabled: boolean;
+  at?: number;
+}
+
 export type MatchEvent =
   | TossEvent
   | StartInningsEvent
@@ -89,7 +123,10 @@ export type MatchEvent =
   | SelectBowlerEvent
   | BallEvent
   | EndInningsEvent
-  | EndMatchEvent;
+  | EndMatchEvent
+  | AddPlayerEvent
+  | RemovePlayerEvent
+  | BoomOverEvent;
 
 // The store implements undo by popping the event log.
 export interface UndoEvent {
@@ -142,6 +179,8 @@ export interface TimelineEntry {
   over: string;
   badge: string;
   text: string;
+  /** true for deliveries bowled while a boom-boom over was armed. */
+  boom?: boolean;
 }
 
 // Public per-innings view (internal `_` fields stripped, derived fields added).
@@ -159,6 +198,13 @@ export interface PublicInnings {
   extras: Extras;
   fallOfWickets: FallOfWicket[];
   timeline: TimelineEntry[];
+  // Boom-boom over (v14): armed for the over in progress / about to start;
+  // 0-based indexes of COMPLETED boom overs; total wicket penalties applied.
+  // Reconciliation invariant: sum(batsmen.runs) + extras.total - penaltyRuns
+  // === runs (runs MAY go negative from boom wicket penalties).
+  boomActive: boolean;
+  boomOvers: number[];
+  penaltyRuns: number;
   // Who bowled the last completed over (null if none); lets clients disable
   // that bowler in the new-bowler picker (currentBowlerIndex is null then).
   lastOverBowlerPlayerIndex: number | null;
@@ -197,6 +243,9 @@ export interface PublicState {
   toss: TossInfo | null;
   needs: Needs;
   innings: PublicInnings[];
+  // Removed (unavailable) players per team, as playerIndex lists into
+  // config.teams[t].players. Names stay in config for historical rows.
+  removed: [number[], number[]];
   inningsBreak: InningsBreak | null;
   startedAt: number | null;
   endedAt: number | null;

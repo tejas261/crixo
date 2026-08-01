@@ -61,6 +61,7 @@ export default function HomePage() {
   // 'toss' = decide on the toss page after create (a provisional 0 is sent;
   // the toss event overrides battingFirstIndex when it's recorded).
   const [battingFirst, setBattingFirst] = useState<0 | 1 | 'toss'>(0);
+  const [boomBoom, setBoomBoom] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [lists, setLists] = useState<MatchLists | null>(null); // null = loading
@@ -160,6 +161,7 @@ export default function HomePage() {
       oversPerInnings: Number(overs),
       battingFirstIndex: battingFirst === 'toss' ? 0 : battingFirst,
       commonPlayer: common || null,
+      boomBoom,
       ...(location ? { location } : {}),
     };
     setSubmitting(true);
@@ -301,6 +303,32 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="form-grid">
+            <div>
+              <span className="field-label">Boom-boom overs</span>
+              <div className="toggle-row" role="group" aria-label="Boom-boom overs">
+                <button
+                  type="button" className="btn"
+                  aria-pressed={!boomBoom}
+                  onClick={() => setBoomBoom(false)}
+                >
+                  Off
+                </button>
+                <button
+                  type="button" className="btn"
+                  aria-pressed={boomBoom}
+                  onClick={() => setBoomBoom(true)}
+                >
+                  On
+                </button>
+              </div>
+              <p className="form-hint form-hint--left">
+                Arm any over from the console: runs count double, every wicket costs 5.
+              </p>
+            </div>
+            <div />
           </div>
 
           <div className="form-submit">

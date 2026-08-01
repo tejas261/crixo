@@ -1,21 +1,20 @@
 // Ball badge — the mono chip used in the over strip and timeline.
 // W = danger fill, 4 = apricot outline, 6 = THE gradient, extras muted.
+// `boom` wraps the chip in a gradient ring: deliveries of a boom-boom over.
 
+import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { badgeKind } from '../format';
 import { colors, fonts, GRAD, GRAD_END, GRAD_START } from '../theme';
 
-export default function Badge({ badge }: { badge: string }) {
+export default function Badge({ badge, boom = false }: { badge: string; boom?: boolean }) {
   const kind = badgeKind(badge);
-  if (kind === 'six') {
-    return (
-      <LinearGradient colors={GRAD} start={GRAD_START} end={GRAD_END} style={styles.base}>
-        <Text style={[styles.text, styles.sixText]}>{badge}</Text>
-      </LinearGradient>
-    );
-  }
-  return (
+  const chip: ReactNode = kind === 'six' ? (
+    <LinearGradient colors={GRAD} start={GRAD_START} end={GRAD_END} style={styles.base}>
+      <Text style={[styles.text, styles.sixText]}>{badge}</Text>
+    </LinearGradient>
+  ) : (
     <View
       style={[
         styles.base,
@@ -36,6 +35,12 @@ export default function Badge({ badge }: { badge: string }) {
       </Text>
     </View>
   );
+  if (!boom) return <>{chip}</>;
+  return (
+    <LinearGradient colors={GRAD} start={GRAD_START} end={GRAD_END} style={styles.boomRing}>
+      {chip}
+    </LinearGradient>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -51,6 +56,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.panel2,
+  },
+  // Gradient-accent ring around boom-over deliveries.
+  boomRing: {
+    padding: 2,
+    borderRadius: 9,
   },
   w: {
     backgroundColor: colors.danger,

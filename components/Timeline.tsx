@@ -35,7 +35,8 @@ export default function Timeline({ innings, inningsKey }: TimelineProps) {
     rows.push(
       <div className="timeline-row" key={`${inningsKey}:${idx}`}>
         <span className="over-num">{e.over}</span>
-        <span className={badgeClass(e.badge)}>{e.badge}</span>
+        {/* Deliveries born in a boom-boom over get the gradient ring. */}
+        <span className={`${badgeClass(e.badge)}${e.boom ? ' badge-boom' : ''}`}>{e.badge}</span>
         <span className="tl-text">{e.text}</span>
       </div>
     );

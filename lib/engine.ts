@@ -20,6 +20,9 @@ export interface MatchConfig {
    *  sides. Must appear in both teams' player lists; scoring treats them as
    *  a full member of each side — this field only records who they are. */
   commonPlayer?: string | null;
+  /** Availability of the boom-boom over rule (see BoomOverEvent). Absent =
+   *  false: boom_over events are rejected unless this is true. */
+  boomBoom?: boolean;
 }
 
 export type BallExtra = 'none' | 'wide' | 'noball' | 'bye' | 'legbye';
@@ -85,6 +88,37 @@ export interface EndMatchEvent {
   at?: number;
 }
 
+// ---------- Mid-match squad changes (v14) ----------
+
+// Append a player to a team's roster. Valid in setup/live/innings_break.
+// Existing player indexes never shift (the new player is pushed at the end).
+export interface AddPlayerEvent {
+  type: 'add_player';
+  teamIndex: 0 | 1;
+  name: string;
+  at?: number;
+}
+
+// Mark a player unavailable (soft delete — the name stays in config so
+// historical scorecard rows keep resolving). Valid in setup/live/innings_break.
+export interface RemovePlayerEvent {
+  type: 'remove_player';
+  teamIndex: 0 | 1;
+  playerIndex: number;
+  at?: number;
+}
+
+// ---------- Boom-boom over (v14) ----------
+
+// Arm (enabled:true) or disarm (enabled:false) the boom-boom rule for the
+// over about to start. Only valid when config.boomBoom, status 'live', and no
+// delivery (legal or illegal) has been bowled in the current over yet.
+export interface BoomOverEvent {
+  type: 'boom_over';
+  enabled: boolean;
+  at?: number;
+}
+
 export type MatchEvent =
   | TossEvent
   | StartInningsEvent
@@ -92,7 +126,10 @@ export type MatchEvent =
   | SelectBowlerEvent
   | BallEvent
   | EndInningsEvent
-  | EndMatchEvent;
+  | EndMatchEvent
+  | AddPlayerEvent
+  | RemovePlayerEvent
+  | BoomOverEvent;
 
 // The store implements undo by popping the event log; if a bare undo event
 // ever reaches the engine it throws 'nothing to undo'.
@@ -146,6 +183,8 @@ export interface TimelineEntry {
   over: string;
   badge: string;
   text: string;
+  /** true for deliveries bowled while a boom-boom over was armed. */
+  boom?: boolean;
 }
 
 // Public per-innings view (internal `_` fields stripped, derived fields added).
@@ -163,6 +202,13 @@ export interface PublicInnings {
   extras: Extras;
   fallOfWickets: FallOfWicket[];
   timeline: TimelineEntry[];
+  // Boom-boom over (v14): armed for the over in progress / about to start;
+  // 0-based indexes of COMPLETED boom overs; total wicket penalties applied.
+  // Reconciliation invariant: sum(batsmen.runs) + extras.total - penaltyRuns
+  // === runs (runs MAY go negative from boom wicket penalties).
+  boomActive: boolean;
+  boomOvers: number[];
+  penaltyRuns: number;
   // Who bowled the last completed over (null if none); lets clients disable
   // that bowler in the new-bowler picker (currentBowlerIndex is null then).
   lastOverBowlerPlayerIndex: number | null;
@@ -190,9 +236,16 @@ export interface Innings {
   extras: Extras;
   fallOfWickets: FallOfWicket[];
   timeline: TimelineEntry[];
+  boomActive: boolean;
+  boomOvers: number[];
+  penaltyRuns: number;
   _overConceded: number;
   _lastOverBowler: number | null;
   _pendingOverEndSwap: boolean;
+  // Deliveries (legal AND illegal) bowled in the over in progress; 0 at an
+  // over boundary. Drives boom_over's "before the over starts" validity and
+  // the remove-current-bowler guard.
+  _ballsThisOver: number;
 }
 
 export interface Needs {
@@ -225,6 +278,9 @@ export interface MatchState {
   inningsBreak: InningsBreak | null;
   needs: Needs;
   innings: Innings[];
+  // Removed (unavailable) players per team, as playerIndex lists into
+  // config.teams[t].players. Names stay in config for historical rows.
+  removed: [number[], number[]];
 }
 
 // The JSON view clients receive (`id` is added by the GET route).
@@ -236,6 +292,7 @@ export interface PublicState {
   toss: TossInfo | null;
   needs: Needs;
   innings: PublicInnings[];
+  removed: [number[], number[]];
   inningsBreak: InningsBreak | null;
   startedAt: number | null;
   endedAt: number | null;
@@ -250,7 +307,7 @@ export interface PublicState {
 const EXTRAS: readonly BallExtra[] = ['none', 'wide', 'noball', 'bye', 'legbye'];
 const WICKET_KINDS: readonly WicketKind[] = ['bowled', 'caught', 'lbw', 'stumped', 'run_out', 'hit_wicket'];
 // Internal (non-public) fields kept per innings; stripped by publicState().
-const INTERNAL_KEYS = ['_overConceded', '_lastOverBowler', '_pendingOverEndSwap'] as const;
+const INTERNAL_KEYS = ['_overConceded', '_lastOverBowler', '_pendingOverEndSwap', '_ballsThisOver'] as const;
 
 // Innings as it looks mid-way through publicState(): public shape, with the
 // internal fields still present (optional) until they are deleted.
@@ -258,6 +315,7 @@ type CloningInnings = PublicInnings & {
   _overConceded?: number;
   _lastOverBowler?: number | null;
   _pendingOverEndSwap?: boolean;
+  _ballsThisOver?: number;
 };
 
 export function initState(config: MatchConfig): MatchState {
@@ -283,6 +341,7 @@ export function initState(config: MatchConfig): MatchState {
     inningsBreak: null, // {startedAt, endedAt, durationMs} once innings 1 closes
     needs: { openers: false, newBatsman: false, newBowler: false, startInnings: false },
     innings: [],
+    removed: [[], []],
   };
   recomputeNeeds(state);
   return state;
@@ -300,6 +359,9 @@ export function applyEvent(state: MatchState, event: MatchEvent | UndoEvent): Ma
     case 'ball': doBall(s, event); break;
     case 'end_innings': doEndInningsEvent(s); break;
     case 'end_match': doEndMatch(s); break;
+    case 'add_player': doAddPlayer(s, event); break;
+    case 'remove_player': doRemovePlayer(s, event); break;
+    case 'boom_over': doBoomOver(s, event); break;
     case 'undo': throw new Error('nothing to undo');
     default: throw new Error(`unknown event type: ${(event as { type: string }).type}`);
   }
@@ -399,9 +461,13 @@ function doStartInnings(s: MatchState): void {
     extras: { wides: 0, noballs: 0, byes: 0, legbyes: 0, total: 0 },
     fallOfWickets: [],
     timeline: [],
+    boomActive: false,
+    boomOvers: [],
+    penaltyRuns: 0,
     _overConceded: 0,
     _lastOverBowler: null,
     _pendingOverEndSwap: false,
+    _ballsThisOver: 0,
   });
   s.currentInningsIndex = idx;
   s.status = 'live';
@@ -415,6 +481,9 @@ function doSelectBatsman(s: MatchState, event: SelectBatsmanEvent): void {
   const { playerIndex } = event;
   if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= players.length) {
     throw new Error('invalid batsman playerIndex');
+  }
+  if (s.removed[ins.battingTeamIndex].includes(playerIndex)) {
+    throw new Error('player is no longer available');
   }
   if (ins.batsmen.some((b) => b.playerIndex === playerIndex)) {
     throw new Error('batsman is out or already batting');
@@ -449,6 +518,9 @@ function doSelectBowler(s: MatchState, event: SelectBowlerEvent): void {
   const { playerIndex } = event;
   if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= players.length) {
     throw new Error('invalid bowler playerIndex');
+  }
+  if (s.removed[bowlingTeamIndex].includes(playerIndex)) {
+    throw new Error('player is no longer available');
   }
   if (playerIndex === ins._lastOverBowler) {
     throw new Error('same bowler cannot bowl consecutive overs');
@@ -498,8 +570,15 @@ function doBall(s: MatchState, event: BallEvent): void {
   const preStrikerIdx = ins.strikerIndex;
   // Delivery label: the ball about to be bowled (illegal deliveries re-use it).
   const overStr = `${Math.floor(ins.legalBalls / 6)}.${(ins.legalBalls % 6) + 1}`;
+  // Boom-boom over (v14): capture the armed flag before the over-end block
+  // can auto-disarm it — the 6th ball of a boom over is still a boom ball.
+  const boom = ins.boomActive;
+  const mult = boom ? 2 : 1;
 
-  // Scoring-rules table.
+  // Scoring-rules table. While a boom over is armed every TEAM-run
+  // contribution is doubled (bat runs, wide/no-ball penalty + their extra
+  // runs, byes/legbyes, extras tallies, bowler conceded). Raw `runs` is still
+  // used for boundary tallies and strike rotation (physical running).
   let legal = true;
   let faced = true;
   let batRuns = 0;
@@ -507,21 +586,21 @@ function doBall(s: MatchState, event: BallEvent): void {
   let teamRuns = 0;
   switch (extra) {
     case 'none':
-      teamRuns = runs; batRuns = runs; conceded = runs;
+      teamRuns = mult * runs; batRuns = mult * runs; conceded = mult * runs;
       break;
     case 'wide':
-      teamRuns = 1 + runs; conceded = 1 + runs; legal = false; faced = false;
-      ins.extras.wides += 1 + runs;
+      teamRuns = mult * (1 + runs); conceded = mult * (1 + runs); legal = false; faced = false;
+      ins.extras.wides += mult * (1 + runs);
       break;
     case 'noball':
-      teamRuns = 1 + runs; batRuns = runs; conceded = 1 + runs; legal = false;
-      ins.extras.noballs += 1; // penalty only; the runs are off the bat
+      teamRuns = mult * (1 + runs); batRuns = mult * runs; conceded = mult * (1 + runs); legal = false;
+      ins.extras.noballs += mult * 1; // penalty only; the runs are off the bat
       break;
     case 'bye':
-      teamRuns = runs; ins.extras.byes += runs;
+      teamRuns = mult * runs; ins.extras.byes += mult * runs;
       break;
     case 'legbye':
-      teamRuns = runs; ins.extras.legbyes += runs;
+      teamRuns = mult * runs; ins.extras.legbyes += mult * runs;
       break;
   }
   ins.extras.total = ins.extras.wides + ins.extras.noballs + ins.extras.byes + ins.extras.legbyes;
@@ -530,11 +609,14 @@ function doBall(s: MatchState, event: BallEvent): void {
   striker.runs += batRuns;
   if (faced) striker.balls += 1;
   if ((extra === 'none' || extra === 'noball')) {
+    // Boundary counters always record the RAW boundary (a boom four is still
+    // one four, even though it scores 8).
     if (runs === 4) striker.fours += 1;
     if (runs === 6) striker.sixes += 1;
   }
   bowler.runs += conceded;
   ins._overConceded += conceded;
+  ins._ballsThisOver += 1;
   if (legal) {
     ins.legalBalls += 1;
     bowler.balls += 1;
@@ -546,6 +628,16 @@ function doBall(s: MatchState, event: BallEvent): void {
   let outBatsmanForText: PublicBatsman | null = null;
   if (wicket) {
     ins.wickets += 1;
+    // Boom wicket penalty (ANY kind, incl. run_out): −5 TEAM runs, tracked in
+    // penaltyRuns so clients can reconcile sum(batsmen)+extras.total −
+    // penaltyRuns === runs. It is a team adjustment only — NOT charged to the
+    // bowler (an all-dot boom over with a wicket is still a maiden) — and the
+    // innings total MAY go negative. Applied before the FoW entry so the fall
+    // records the post-penalty score.
+    if (boom) {
+      ins.runs -= 5;
+      ins.penaltyRuns += 5;
+    }
     if (wicket.kind !== 'run_out') bowler.wickets += 1;
     // run_out outEnd refers to the ends after completed runs; other kinds always
     // dismiss the batsman who faced the delivery.
@@ -579,8 +671,14 @@ function doBall(s: MatchState, event: BallEvent): void {
   if (legal && ins.legalBalls % 6 === 0) {
     if (ins._overConceded === 0) bowler.maidens += 1;
     ins._overConceded = 0;
+    ins._ballsThisOver = 0;
     ins._lastOverBowler = bowler.playerIndex;
     ins.currentBowlerIndex = null;
+    // A completed boom over disarms automatically and is recorded (0-based).
+    if (ins.boomActive) {
+      ins.boomActive = false;
+      ins.boomOvers.push(Math.floor((ins.legalBalls - 1) / 6));
+    }
     if (ins.strikerIndex === null || ins.nonStrikerIndex === null) {
       ins._pendingOverEndSwap = true; // defer until replacement batsman arrives
     } else {
@@ -592,13 +690,17 @@ function doBall(s: MatchState, event: BallEvent): void {
     over: overStr,
     badge: ballBadge(extra, runs, wicket),
     text: ballText(bowler.name, striker.name, extra, runs, wicket, outBatsmanForText),
+    ...(boom ? { boom: true } : {}),
   });
 
-  // Innings-end conditions.
-  const teamSize = s.config.teams[ins.battingTeamIndex].players.length;
+  // Innings-end conditions. A dismissal ends the innings when NO eligible
+  // next batsman exists (all-out with the ACTIVE squad — see
+  // hasEligibleBatsman). Chase comparison is generic: with a boom-negative
+  // innings-1 total the target may be ≤ 0 and the chase can complete on its
+  // first delivery.
   const maxBalls = s.config.oversPerInnings * 6;
   const chaseDone = ins.target !== null && ins.runs >= ins.target;
-  if (ins.wickets >= teamSize - 1 || ins.legalBalls >= maxBalls || chaseDone) {
+  if ((wicket && !hasEligibleBatsman(s, ins)) || ins.legalBalls >= maxBalls || chaseDone) {
     closeCurrentInnings(s);
   }
 }
@@ -610,10 +712,98 @@ function doEndInningsEvent(s: MatchState): void {
 
 function doEndMatch(s: MatchState): void {
   if (s.status === 'completed') throw new Error('match already completed');
+  // A never-fired boom arm dies with the match (see closeCurrentInnings).
+  if (s.status === 'live') cur(s).boomActive = false;
   s.status = 'completed';
   s.result = s.innings.length === 2
     ? computeResult(s)
     : { winnerIndex: null, text: 'Match abandoned' };
+}
+
+// ---------- mid-match squad changes (v14) ----------
+
+function doAddPlayer(s: MatchState, event: AddPlayerEvent): void {
+  if (s.status === 'completed') throw new Error('cannot change the squad after the match is completed');
+  const { teamIndex } = event;
+  if (teamIndex !== 0 && teamIndex !== 1) throw new Error('invalid teamIndex');
+  if (typeof event.name !== 'string') throw new Error('player name must be a non-empty string');
+  const name = event.name.trim().replace(/\s+/g, ' ');
+  if (name === '') throw new Error('player name must be a non-empty string');
+  const team = s.config.teams[teamIndex];
+  const removed = s.removed[teamIndex];
+  // Case-insensitive uniqueness among ACTIVE players only: a removed player's
+  // name may be re-added (as a NEW index; the old row stays historical).
+  const lower = name.toLowerCase();
+  const clash = team.players.some((p, i) => !removed.includes(i) && p.toLowerCase() === lower);
+  if (clash) throw new Error(`${name} is already in ${team.name}`);
+  if (activeCount(s, teamIndex) >= 11) throw new Error('team already has 11 active players');
+  // Push at the end: existing player indexes never shift.
+  team.players.push(name);
+}
+
+function doRemovePlayer(s: MatchState, event: RemovePlayerEvent): void {
+  if (s.status === 'completed') throw new Error('cannot change the squad after the match is completed');
+  const { teamIndex, playerIndex } = event;
+  if (teamIndex !== 0 && teamIndex !== 1) throw new Error('invalid teamIndex');
+  const players = s.config.teams[teamIndex].players;
+  if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= players.length) {
+    throw new Error('invalid playerIndex');
+  }
+  if (s.removed[teamIndex].includes(playerIndex)) throw new Error('player already removed');
+  if (activeCount(s, teamIndex) <= 2) {
+    throw new Error('cannot remove: a team needs at least 2 active players');
+  }
+  if (s.status === 'live') {
+    const ins = cur(s);
+    if (ins.battingTeamIndex === teamIndex) {
+      // Anyone with a batting entry in the CURRENT innings (out or at the
+      // crease) stays until the innings ends.
+      if (ins.batsmen.some((b) => b.playerIndex === playerIndex)) {
+        throw new Error('cannot remove a player who has batted in this innings');
+      }
+    } else if (ins.currentBowlerIndex !== null
+        && ins.bowlers[ins.currentBowlerIndex].playerIndex === playerIndex) {
+      // Stricter than "mid-over only": also rejected between select_bowler and
+      // the over's first delivery, so currentBowlerIndex can never reference a
+      // removed player (undo the selection first).
+      throw new Error('cannot remove the current bowler');
+    }
+  }
+  s.removed[teamIndex].push(playerIndex);
+  if (s.status === 'live') {
+    const ins = cur(s);
+    // Removing the last eligible batsman while a replacement is owed exhausts
+    // the pool — the innings closes exactly as it would on the dismissal
+    // itself. (batsmen.length >= 2 excludes the openers phase, where the pool
+    // can never be exhausted because activeCount stays >= 2.)
+    if (ins.battingTeamIndex === teamIndex
+        && ins.batsmen.length >= 2
+        && (ins.strikerIndex === null || ins.nonStrikerIndex === null)
+        && !hasEligibleBatsman(s, ins)) {
+      closeCurrentInnings(s);
+    }
+  }
+}
+
+// ---------- boom-boom over (v14) ----------
+
+function doBoomOver(s: MatchState, event: BoomOverEvent): void {
+  if (!s.config.boomBoom) throw new Error('boom-boom rule is not enabled for this match');
+  if (s.status !== 'live') throw new Error('no innings in progress');
+  if (typeof event.enabled !== 'boolean') throw new Error('boom_over requires an enabled boolean');
+  const ins = cur(s);
+  // Only at an over boundary: no delivery (legal OR illegal) bowled yet in
+  // the over about to start / in progress.
+  if (ins._ballsThisOver !== 0) {
+    throw new Error('boom over can only be changed before the over starts');
+  }
+  if (event.enabled) {
+    if (ins.boomActive) throw new Error('boom over is already armed');
+    ins.boomActive = true;
+  } else {
+    if (!ins.boomActive) throw new Error('boom over is not armed');
+    ins.boomActive = false;
+  }
 }
 
 // ---------- helpers ----------
@@ -628,7 +818,28 @@ function swapStrike(ins: Innings): void {
   ins.nonStrikerIndex = t;
 }
 
+/** Active (non-removed) squad size for a team. */
+function activeCount(s: MatchState, teamIndex: number): number {
+  return s.config.teams[teamIndex].players.length - s.removed[teamIndex].length;
+}
+
+/** True if the batting side has a selectable next batsman for this innings:
+ *  not removed and no batsmen entry yet (an entry covers out AND at-crease). */
+function hasEligibleBatsman(s: MatchState, ins: Innings): boolean {
+  const players = s.config.teams[ins.battingTeamIndex].players;
+  const removed = s.removed[ins.battingTeamIndex];
+  const entered = new Set(ins.batsmen.map((b) => b.playerIndex));
+  for (let i = 0; i < players.length; i++) {
+    if (!removed.includes(i) && !entered.has(i)) return true;
+  }
+  return false;
+}
+
 function closeCurrentInnings(s: MatchState): void {
+  // An armed-but-never-started boom over dies with the innings: it is not a
+  // completed boom over (boomOvers untouched; any deliveries it DID see keep
+  // their timeline boom flags), and a closed innings must not read as armed.
+  cur(s).boomActive = false;
   if (s.currentInningsIndex === 0) {
     s.status = 'innings_break';
   } else {
@@ -643,7 +854,15 @@ function computeResult(s: MatchState): MatchResult {
   if (i2.runs >= target) {
     const teamIdx = i2.battingTeamIndex as 0 | 1;
     const team = s.config.teams[teamIdx];
-    const wicketsInHand = team.players.length - 1 - i2.wickets;
+    // Wickets in hand generalizes players.length−1−wickets to the ACTIVE
+    // squad. This is consistent with mid-match squad changes because:
+    // (1) a player with a batting entry in this innings cannot be removed
+    //     while it is live, so every counted wicket fell to a still-active
+    //     player and no dismissed batsman ever leaves the active pool;
+    // (2) entries = wickets + batsmen at the crease <= activeCount, and a
+    //     chase completes with at least one batsman in, so
+    //     activeCount − 1 − wickets >= (at crease) − 1 >= 0.
+    const wicketsInHand = activeCount(s, teamIdx) - 1 - i2.wickets;
     const ballsLeft = s.config.oversPerInnings * 6 - i2.legalBalls;
     return {
       winnerIndex: teamIdx,

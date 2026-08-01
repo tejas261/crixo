@@ -82,6 +82,7 @@ export default function UmpirePage() {
   const [keyInput, setKeyInput] = useState('');
   const [selectedExtra, setSelectedExtra] = useState<PadExtra | null>(null); // null | 'wide' | 'noball' | 'bye' | 'legbye'
   const [wicketOpen, setWicketOpen] = useState(false);
+  const [squadsOpen, setSquadsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'endInnings' | 'endMatch' | null>(null); // null | 'endInnings' | 'endMatch'
   const [completedDismissed, setCompletedDismissed] = useState(false); // completed sheet shows once, then stays closed
   const [posting, setPosting] = useState(false);
@@ -93,6 +94,15 @@ export default function UmpirePage() {
     return () => document.body.classList.remove('console-page');
   }, []);
 
+  // Boom matches get a taller fixed pad (the boom row lives inside it), so
+  // the reserved scroll space underneath has to grow with it.
+  const boomMatch = Boolean(state?.config.boomBoom);
+  useEffect(() => {
+    if (!boomMatch) return undefined;
+    document.body.classList.add('boom-page');
+    return () => document.body.classList.remove('boom-page');
+  }, [boomMatch]);
+
   useEffect(() => {
     if (!matchId) return;
     let cancelled = false;
@@ -100,6 +110,7 @@ export default function UmpirePage() {
     // must reset here (the component instance survives the navigation).
     setCompletedDismissed(false);
     setKeyFallback(null);
+    setSquadsOpen(false);
     fetchJSON<RoleResponse>(`/api/matches/${matchId}/role`)
       .then((role) => {
         if (cancelled) return;
@@ -164,6 +175,11 @@ export default function UmpirePage() {
     // accidental end_match, and for read-only visitors.
     if (state.status === 'completed') return completedDismissed ? null : 'completed';
     if (!scorer) return null; // read-only: no action sheets
+    // Squads outranks the needs-driven sheets: it can only be opened from the
+    // pad footer (no sheet up) or from the start-innings sheet's own footer,
+    // and a squad change may itself resolve/raise a `needs` flag — the needs
+    // sheet takes back over the moment squads is dismissed.
+    if (squadsOpen) return 'squads';
     const n: Partial<Needs> = state.needs || {};
     if (n.startInnings) return `start:${state.status}`;
     if (n.openers) return `openers:${state.currentInningsIndex}`;
@@ -172,13 +188,14 @@ export default function UmpirePage() {
     if (confirmAction) return `confirm:${confirmAction}`;
     if (wicketOpen) return 'wicket';
     return null;
-  }, [state, scorer, completedDismissed, confirmAction, wicketOpen, i]);
+  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, i]);
 
   // A sheet the umpire may close without acting (Escape / backdrop). Needs-
   // driven sheets are not dismissible, but each carries its own Undo footer
   // so a mis-recorded ball is always correctable.
   const dismissHandler = useMemo<(() => void) | undefined>(() => {
     if (sheetKey === 'wicket') return () => setWicketOpen(false);
+    if (sheetKey === 'squads') return () => setSquadsOpen(false);
     if (sheetKey?.startsWith('confirm:')) return () => setConfirmAction(null);
     if (sheetKey === 'completed') return () => setCompletedDismissed(true);
     return undefined;
@@ -221,15 +238,23 @@ export default function UmpirePage() {
     }
     if (i) {
       const batTeam = state.config.teams[i.battingTeamIndex].name;
+      // Boom state rides on the context line so everyone (read-only included)
+      // sees it; penalties reconcile the total with the batting card sums.
+      const boomBits = (
+        <>
+          {i.boomActive && <> · <strong>BOOM ×2, wickets −5</strong></>}
+          {i.penaltyRuns > 0 && <> · boom −{i.penaltyRuns}</>}
+        </>
+      );
       if (state.currentInningsIndex === 1 && i.target != null) {
         return (
           <>
             <strong>{batTeam}</strong> chasing {i.target} — need {i.runsNeeded} from{' '}
-            {i.ballsRemaining} · CRR {i.crr} · RRR {i.rrr}
+            {i.ballsRemaining} · CRR {i.crr} · RRR {i.rrr}{boomBits}
           </>
         );
       }
-      return <><strong>{batTeam}</strong> batting · first innings · CRR {i.crr}</>;
+      return <><strong>{batTeam}</strong> batting · first innings · CRR {i.crr}{boomBits}</>;
     }
     return null;
   }
@@ -290,6 +315,17 @@ export default function UmpirePage() {
         />
       );
     }
+    if (sheetKey === 'squads') {
+      return (
+        <SquadsSheet
+          key={sheetKey}
+          state={state}
+          postEvent={postEvent}
+          posting={posting}
+          onClose={() => setSquadsOpen(false)}
+        />
+      );
+    }
     if (sheetKey.startsWith('start:')) {
       return (
         <StartInningsSheet
@@ -297,7 +333,10 @@ export default function UmpirePage() {
           state={state}
           matchId={matchId}
           onStart={() => postEvent({ type: 'start_innings' })}
-          undoFooter={state.status === 'innings_break' ? undoFooter : null}
+          onSquads={() => setSquadsOpen(true)}
+          onUndo={state.status === 'innings_break' && showUndoFooter
+            ? () => postEvent({ type: 'undo' })
+            : null}
         />
       );
     }
@@ -441,6 +480,42 @@ export default function UmpirePage() {
       </section>
 
       <section className="panel pad" aria-label="Ball pad">
+        {/* Boom-boom over (v14). Armed: THE gradient pill for everyone, with a
+            quiet cancel for the scorer (the engine rejects it after the first
+            delivery — the 400 surfaces as a toast). Not armed: an armed-style
+            chip at every over boundary, a quiet hint mid-over (the row always
+            renders in live boom matches so the fixed pad never jumps).
+            legalBalls % 6 === 0 is a heuristic — after e.g. a first-ball wide
+            the engine has already counted an illegal delivery and will 400
+            with a clear message; we just surface it. */}
+        {state?.config.boomBoom && state.status === 'live' && i && (
+          <div className="boom-row">
+            {i.boomActive ? (
+              <>
+                <span className="boom-pill" role="status">BOOM ×2 · wickets −5</span>
+                {scorer && (
+                  <button
+                    className="btn-quiet"
+                    disabled={posting}
+                    onClick={() => postEvent({ type: 'boom_over', enabled: false })}
+                  >
+                    cancel
+                  </button>
+                )}
+              </>
+            ) : scorer && i.legalBalls % 6 === 0 ? (
+              <button
+                className="boom-arm"
+                disabled={posting}
+                onClick={() => postEvent({ type: 'boom_over', enabled: true })}
+              >
+                Boom-boom this over
+              </button>
+            ) : (
+              <span className="hint">Boom-boom arms at the next over.</span>
+            )}
+          </div>
+        )}
         <div className="run-grid">
           {[0, 1, 2, 3, 4, 6].map((r) => (
             <button
@@ -488,6 +563,13 @@ export default function UmpirePage() {
           </button>
         </div>
         <div className="pad-footer">
+          <button
+            className="btn-quiet"
+            disabled={!scorer || !state || state.status === 'completed'}
+            onClick={() => setSquadsOpen(true)}
+          >
+            Squads
+          </button>
           <button
             className="btn-quiet"
             disabled={!scorer || posting || state?.status !== 'live'}
@@ -609,10 +691,11 @@ interface StartInningsSheetProps {
   state: PublicState;
   matchId: string;
   onStart: () => void;
-  undoFooter: ReactNode;
+  onSquads: () => void;
+  onUndo: (() => void) | null;
 }
 
-function StartInningsSheet({ state, matchId, onStart, undoFooter }: StartInningsSheetProps) {
+function StartInningsSheet({ state, matchId, onStart, onSquads, onUndo }: StartInningsSheetProps) {
   const second = state.status === 'innings_break';
   return (
     <>
@@ -628,15 +711,19 @@ function StartInningsSheet({ state, matchId, onStart, undoFooter }: StartInnings
       <button className="btn btn-primary btn-block sheet-confirm" onClick={onStart}>
         {second ? 'Start second innings' : 'Start innings'}
       </button>
-      {/* No toss yet: a quiet detour to the toss page before the first ball. */}
-      {!second && !state.toss ? (
-        <div className="pad-footer">
-          <span />
+      {/* Squads stays reachable while this sheet blocks the pad footer (add a
+          latecomer before the innings starts); plus the quiet toss detour
+          before the first ball, or Undo during the break. */}
+      <div className="pad-footer">
+        <button className="btn-quiet" onClick={onSquads}>Squads</button>
+        {!second && !state.toss ? (
           <Link className="btn-quiet" href={`/toss/${matchId}`}>Hold the toss</Link>
-        </div>
-      ) : (
-        undoFooter
-      )}
+        ) : onUndo ? (
+          <button className="btn-quiet" onClick={onUndo}>Undo last ball</button>
+        ) : (
+          <span />
+        )}
+      </div>
     </>
   );
 }
@@ -682,8 +769,16 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
   const [nonStriker, setNonStriker] = useState<number | null>(null);
   const [bowler, setBowler] = useState<number | null>(null);
 
-  const bat = state.config.teams[innings.battingTeamIndex].players;
-  const bowl = state.config.teams[1 - innings.battingTeamIndex].players;
+  // Removed (unavailable) players never appear in a picker — the engine would
+  // reject them with 'player is no longer available' anyway.
+  const removedBat = state.removed[innings.battingTeamIndex] ?? [];
+  const removedBowl = state.removed[1 - innings.battingTeamIndex] ?? [];
+  const bat = state.config.teams[innings.battingTeamIndex].players
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !removedBat.includes(idx));
+  const bowl = state.config.teams[1 - innings.battingTeamIndex].players
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !removedBowl.includes(idx));
 
   async function confirm() {
     // Snapshot the picks first: the sheet may unmount mid-sequence as `needs`
@@ -703,7 +798,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       <p className="sheet-sub">Choose the two opening batsmen and the opening bowler.</p>
       <div className="sheet-section-label">On strike</div>
       <div className="pick-list">
-        {bat.map((p, idx) => (
+        {bat.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="batsman"
             pressed={striker === idx}
@@ -714,7 +809,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       </div>
       <div className="sheet-section-label">Non-striker</div>
       <div className="pick-list">
-        {bat.map((p, idx) => (
+        {bat.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="batsman"
             pressed={nonStriker === idx}
@@ -725,7 +820,7 @@ function OpenersSheet({ state, innings, postEvent }: OpenersSheetProps) {
       </div>
       <div className="sheet-section-label">Opening bowler</div>
       <div className="pick-list">
-        {bowl.map((p, idx) => (
+        {bowl.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="bowler"
             pressed={bowler === idx}
@@ -754,7 +849,9 @@ interface NewPlayerSheetProps {
 function NewBatsmanSheet({ state, innings, postEvent, undoFooter }: NewPlayerSheetProps) {
   const bat = state.config.teams[innings.battingTeamIndex].players;
   const used = new Set(innings.batsmen.map((b) => b.playerIndex));
-  const eligible = bat.map((p, idx) => ({ p, idx })).filter(({ idx }) => !used.has(idx));
+  const removed = state.removed[innings.battingTeamIndex] ?? [];
+  const eligible = bat.map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !used.has(idx) && !removed.includes(idx));
   return (
     <>
       <h2>New batsman</h2>
@@ -777,7 +874,10 @@ function NewBatsmanSheet({ state, innings, postEvent, undoFooter }: NewPlayerShe
 }
 
 function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerSheetProps) {
-  const bowl = state.config.teams[1 - innings.battingTeamIndex].players;
+  const removed = state.removed[1 - innings.battingTeamIndex] ?? [];
+  const bowl = state.config.teams[1 - innings.battingTeamIndex].players
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !removed.includes(idx));
   // currentBowlerIndex is null at over end; the engine exposes the last
   // completed over's bowler separately so we can disable them here.
   const prev = innings.lastOverBowlerPlayerIndex ?? null;
@@ -786,7 +886,7 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
       <h2>New bowler</h2>
       <p className="sheet-sub">Pick who bowls the next over.</p>
       <div className="pick-list">
-        {bowl.map((p, idx) => (
+        {bowl.map(({ p, idx }) => (
           <PickButton
             key={idx} name={p} role="bowler"
             disabled={idx === prev}
@@ -797,6 +897,143 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
       </div>
       {undoFooter}
     </>
+  );
+}
+
+// ---------- Squads (v14 mid-match squad changes) ----------
+
+interface SquadsSheetProps {
+  state: PublicState;
+  postEvent: PostEvent;
+  posting: boolean;
+  onClose: () => void;
+}
+
+// Both squads side by side (stacked at phone widths). The remove affordance
+// mirrors the engine guards so it never shows when the server would refuse,
+// but the server stays the authority — a rejected event's 400 message
+// surfaces as a toast via postEvent.
+function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
+  return (
+    <>
+      <h2>Squads</h2>
+      <p className="sheet-sub">
+        Add latecomers, or remove players who left — their scorecard entries stay.
+      </p>
+      <div className="squads-grid">
+        <SquadColumn state={state} teamIndex={0} postEvent={postEvent} posting={posting} />
+        <SquadColumn state={state} teamIndex={1} postEvent={postEvent} posting={posting} />
+      </div>
+      <div className="pad-footer">
+        <span />
+        <button className="btn-quiet" onClick={onClose}>Close</button>
+      </div>
+    </>
+  );
+}
+
+interface SquadColumnProps {
+  state: PublicState;
+  teamIndex: 0 | 1;
+  postEvent: PostEvent;
+  posting: boolean;
+}
+
+function SquadColumn({ state, teamIndex, postEvent, posting }: SquadColumnProps) {
+  const [name, setName] = useState('');
+  const team = state.config.teams[teamIndex];
+  const removed = state.removed[teamIndex] ?? [];
+  const activeCount = team.players.length - removed.length;
+  const full = activeCount >= 11;
+
+  // Live-innings guards only apply while an innings is actually in progress
+  // (during setup / innings break the engine allows removing anyone, down to
+  // the 2-active floor).
+  const live = state.status === 'live' && state.currentInningsIndex != null
+    ? state.innings[state.currentInningsIndex]
+    : null;
+  const batting = live != null && live.battingTeamIndex === teamIndex;
+  const currentBowlerPlayer = live != null && !batting && live.currentBowlerIndex != null
+    ? live.bowlers[live.currentBowlerIndex].playerIndex
+    : null;
+
+  async function add() {
+    const v = name.trim().replace(/\s+/g, ' ');
+    if (!v) return;
+    if (await postEvent({ type: 'add_player', teamIndex, name: v })) setName('');
+  }
+
+  return (
+    <div>
+      <div className="squad-team-name">
+        {team.name} <span className="squad-count">{activeCount} active</span>
+      </div>
+      <div className="squad-list">
+        {team.players.map((p, idx) => {
+          const left = removed.includes(idx);
+          // A batsmen entry in the CURRENT innings (out or at the crease)
+          // blocks removal until the innings ends — same rule as the engine.
+          const entry = batting ? live!.batsmen.find((b) => b.playerIndex === idx) : undefined;
+          const atCrease = entry != null && entry.out == null;
+          const bowling = currentBowlerPlayer === idx;
+          const tag = left ? 'left'
+            : atCrease ? 'at crease'
+              : entry != null ? 'out'
+                : bowling ? 'bowling'
+                  : null;
+          const removable = !left && activeCount > 2 && entry == null && !bowling;
+          return (
+            <div key={idx} className={`squad-row${left ? ' squad-row--left' : ''}`}>
+              <Avatar name={p} role={batting ? 'batsman' : 'bowler'} small />
+              <span className="squad-name">
+                {p}
+                {state.config.commonPlayer != null && p === state.config.commonPlayer && !left && (
+                  <span className="both-chip" title="Plays for both sides">both sides</span>
+                )}
+              </span>
+              {tag != null && (
+                <span className={`squad-tag${atCrease || bowling ? ' squad-tag--on' : ''}`}>
+                  {tag}
+                </span>
+              )}
+              {removable && (
+                <button
+                  type="button"
+                  className="roster-x"
+                  disabled={posting}
+                  aria-label={`Remove ${p} from ${team.name}`}
+                  onClick={() => postEvent({ type: 'remove_player', teamIndex, playerIndex: idx })}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="squad-add">
+        <input
+          type="text"
+          value={name}
+          placeholder="Add a player"
+          aria-label={`Add a player to ${team.name}`}
+          maxLength={40}
+          autoComplete="off"
+          disabled={full}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void add(); } }}
+        />
+        <button
+          type="button"
+          className="btn roster-add"
+          disabled={full || !name.trim() || posting}
+          onClick={() => { void add(); }}
+        >
+          Add
+        </button>
+      </div>
+      {full && <p className="roster-hint">Squad is full — 11 active players.</p>}
+    </div>
   );
 }
 

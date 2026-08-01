@@ -49,6 +49,8 @@ export default function HomeScreen() {
   // 'toss' = decide on the toss page after create (a provisional 0 is sent;
   // the toss event overrides battingFirstIndex when it's recorded).
   const [battingFirst, setBattingFirst] = useState<0 | 1 | 'toss'>(0);
+  // Boom-boom over rule availability (armed per-over from the console).
+  const [boomBoom, setBoomBoom] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [lists, setLists] = useState<MatchLists | null>(null); // null = loading
@@ -179,6 +181,7 @@ export default function HomeScreen() {
       oversPerInnings: oversNum,
       battingFirstIndex: (battingFirst === 'toss' ? 0 : battingFirst) as 0 | 1,
       commonPlayer: common || null,
+      boomBoom,
       // Best-effort coordinates (see src/location.ts) — may ask for
       // permission right here, at the moment of intent.
       location: await creationLocation({
@@ -197,7 +200,7 @@ export default function HomeScreen() {
       router.push(battingFirst === 'toss' ? `/toss/${id}` : `/umpire/${id}`);
       // Reset the form for the next visit.
       setTeamA(''); setTeamB(''); setPlayersA([]); setPlayersB([]);
-      setCommonPlayer(''); setOvers('10'); setBattingFirst(0);
+      setCommonPlayer(''); setOvers('10'); setBattingFirst(0); setBoomBoom(false);
     } catch (err) {
       toast((err as Error).message);
     } finally {
@@ -293,6 +296,27 @@ export default function HomeScreen() {
               onChangeText={setOvers}
               maxLength={2}
             />
+
+            <FieldLabel>Boom-boom overs</FieldLabel>
+            <View style={styles.toggleRow}>
+              <Btn
+                title="Off"
+                pressed={!boomBoom}
+                onPress={() => setBoomBoom(false)}
+                style={styles.toggleBtn}
+                small
+              />
+              <Btn
+                title="On"
+                pressed={boomBoom}
+                onPress={() => setBoomBoom(true)}
+                style={styles.toggleBtn}
+                small
+              />
+            </View>
+            <Hint style={{ marginTop: 6 }}>
+              Arm any over from the console: runs count double, every wicket costs 5.
+            </Hint>
 
             <FieldLabel>Who bats first</FieldLabel>
             <View style={styles.toggleRow}>
