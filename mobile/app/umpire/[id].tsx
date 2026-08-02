@@ -19,6 +19,7 @@ import {
   storeAdminKey,
   type ApiError,
 } from '../../src/api';
+import { track } from '../../src/analytics';
 import { useMatch } from '../../src/useMatch';
 import { currentInnings, fmtOvers, teamsLine } from '../../src/format';
 import { PageBackground, SiteHeader } from '../../src/components/Screen';
@@ -283,6 +284,7 @@ export default function UmpireScreen() {
   }
 
   const shareSummary = () => {
+    track('share', { matchId });
     Share.share({ message: `${getBaseUrl()}/summary/${matchId}` }).catch(() => {});
   };
 

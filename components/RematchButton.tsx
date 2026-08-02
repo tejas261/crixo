@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchJSON } from '@/lib/useMatch';
 import { toast } from '@/components/Toasts';
+import { track } from '@/lib/analytics';
 import type { PublicState } from '@/lib/engine';
 
 // Best-effort creation coordinates: only when the browser has ALREADY
@@ -58,6 +59,8 @@ export default function RematchButton({ state, block = false }: RematchButtonPro
         // so this is a true swap of who bats first.
         battingFirstIndex: (1 - cfg.battingFirstIndex) as 0 | 1,
         commonPlayer: cfg.commonPlayer ?? null,
+        // Carry the boom-boom rule over — a rematch is the same game again.
+        boomBoom: cfg.boomBoom === true,
         ...(location ? { location } : {}),
       };
       // The server grants scoring rights to this browser's session cookie
@@ -66,6 +69,7 @@ export default function RematchButton({ state, block = false }: RematchButtonPro
         method: 'POST',
         body: JSON.stringify(body),
       });
+      track('rematch', { from: state.id, to: id });
       router.push(`/umpire/${id}`);
     } catch (err) {
       toast((err as Error).message);

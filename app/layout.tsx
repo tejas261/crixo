@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { Space_Grotesk, Instrument_Sans, Spline_Sans_Mono } from 'next/font/google';
 import Toasts from '@/components/Toasts';
+import AnalyticsListener from '@/components/AnalyticsListener';
 import './globals.css';
 
 // Display face: Space Grotesk (700) replaces Anton — the old ultra-condensed
@@ -55,6 +56,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         {children}
         <Toasts />
+        <AnalyticsListener />
       </body>
     </html>
   );

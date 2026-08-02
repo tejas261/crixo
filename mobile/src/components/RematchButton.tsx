@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
+import { track } from '../analytics';
 import { createMatch, storeAdminKey } from '../api';
 import { creationLocation } from '../location';
 import { toast } from './Toast';
@@ -44,6 +45,7 @@ export default function RematchButton({ state }: { state: PublicState }) {
       // The admin key is this device's scoring credential — keep it in the
       // keychain and send it with every event POST.
       await storeAdminKey(id, adminKey);
+      track('rematch', { from: state.id, to: id });
       router.push(`/umpire/${id}`);
     } catch (err) {
       toast((err as Error).message);

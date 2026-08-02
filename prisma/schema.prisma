@@ -137,3 +137,29 @@ model Event {
   @@id([matchId, seq])
   @@map("events")
 }
+
+// ---------------------------------------------------------------------------
+// First-party analytics (v16)
+// ---------------------------------------------------------------------------
+
+// Append-only product/GTM telemetry, one row per client event (pageviews,
+// app opens, funnel actions). deviceId is an anonymous stable id: a hash of
+// the session cookie on web (no client storage), a generated id in the
+// mobile keychain. No PII, no raw IPs. Scoring depth (balls, boom, squads)
+// is NOT tracked here — it already lives in `events` and is joined by the
+// summary endpoint.
+model AnalyticsEvent {
+  id        Int      @id @default(autoincrement())
+  name      String
+  props     Json?
+  deviceId  String?  @map("device_id")
+  platform  String // 'web' | 'android' | 'ios'
+  path      String?
+  referrer  String?
+  ua        String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@index([name, createdAt])
+  @@map("analytics_events")
+}

@@ -4,6 +4,7 @@
 import { Fragment, useCallback, useState, type ReactNode } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { track } from '../../src/analytics';
 import { getBaseUrl, getMatch } from '../../src/api';
 import { fmtEcon, fmtOvers, fmtSR, teamsLine } from '../../src/format';
 import AdBanner from '../../src/components/AdBanner';
@@ -39,6 +40,8 @@ export default function SummaryScreen() {
   );
 
   const share = () => {
+    // Shares are the word-of-mouth loop — the highest-value GTM signal.
+    track('share', { matchId });
     Share.share({ message: `${getBaseUrl()}/summary/${matchId}` }).catch(() => {});
   };
 

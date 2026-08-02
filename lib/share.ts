@@ -6,6 +6,7 @@
 // clipboard -> hidden-textarea execCommand -> tell the user what to do.
 
 import { toast } from '@/components/Toasts';
+import { track } from '@/lib/analytics';
 
 // Copy arbitrary text (no share sheet): async clipboard -> hidden-textarea
 // execCommand -> tell the user it failed. Toasts on success.
@@ -39,6 +40,8 @@ export async function copyText(
 }
 
 export async function shareOrCopy(url: string, title = 'Match summary'): Promise<void> {
+  // Shares are the app's word-of-mouth loop — the highest-value GTM signal.
+  track('share', { method: typeof navigator.share === 'function' ? 'sheet' : 'copy' });
   if (navigator.share) {
     try { await navigator.share({ title, url }); } catch { /* dismissed */ }
     return;

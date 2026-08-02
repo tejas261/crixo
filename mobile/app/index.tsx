@@ -23,6 +23,7 @@ import {
   type Me,
   storeAdminKey,
 } from '../src/api';
+import { track } from '../src/analytics';
 import { AccountSheet, RemoveAdsSheet } from '../src/components/AccountSheets';
 import AccountAvatar from '../src/components/AccountAvatar';
 import AdBanner from '../src/components/AdBanner';
@@ -196,6 +197,15 @@ export default function HomeScreen() {
       // The admin key is this device's scoring credential — keep it in the
       // keychain and send it with every event POST.
       await storeAdminKey(id, adminKey);
+      // The activation event — everything upstream of this is acquisition.
+      track('match_created', {
+        overs: oversNum,
+        players: playersA.length + playersB.length + (common ? 2 : 0),
+        boomBoom,
+        toss: battingFirst === 'toss',
+        common: Boolean(common),
+        located: body.location != null,
+      });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.push(battingFirst === 'toss' ? `/toss/${id}` : `/umpire/${id}`);
       // Reset the form for the next visit.

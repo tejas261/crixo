@@ -54,6 +54,27 @@ JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew :app:assembleRelease
 ⚠️ Signing uses `mobile/crixo-release.keystore` (git-ignored). **Back it up** —
 updates must be signed with the same key or installed apps can't upgrade.
 
+## Analytics (GTM)
+
+First-party, in our own Postgres — free, and works identically on web and in
+the APK. Clients fire-and-forget to `POST /api/track` (anonymous ids: hashed
+session cookie on web, a keychain-minted device id on mobile; no PII, no raw
+IPs). Captured: pageviews/screens with UTM params + referrers + viewport,
+`app_open` (app version/OS), `match_created` (overs/players/boom/toss/
+location), `share`, `rematch`. Scoring depth (balls, boom overs, squad
+changes, corrections) is NOT double-tracked — the summary endpoint computes
+it from the event-sourced `events` table.
+
+- **Dashboard**: `/growth` — paste `ANALYTICS_KEY` (server `.env`), pick a
+  window. Funnel (created → tossed → scored → 12+ balls), feature usage,
+  daily devices/views, platform split, top screens, referrers, UTM sources.
+  API: `GET /api/analytics/summary?days=30` with `x-analytics-key`.
+- **Free external tools** (web, env-gated — inert until a key is set):
+  - `NEXT_PUBLIC_GA_ID` → Google Analytics 4 (acquisition/geo/demographics).
+  - `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`) →
+    PostHog Cloud free tier (funnels, retention, session replay).
+  Set either in `.env`, rebuild, done — no code changes.
+
 ## Docs
 
 `SPEC.md` is the living contract: scoring rules, API shapes, and a v1→v13

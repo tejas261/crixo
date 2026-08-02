@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { fetchJSON } from '@/lib/useMatch';
+import { track } from '@/lib/analytics';
 import { useAccount } from '@/lib/useAccount';
 import { useAds } from '@/lib/useAds';
 import { toast } from '@/components/Toasts';
@@ -171,6 +172,15 @@ export default function HomePage() {
       const { id } = await fetchJSON<{ id: string; adminKey: string }>('/api/matches', {
         method: 'POST',
         body: JSON.stringify(body),
+      });
+      // The activation event — everything upstream of this is acquisition.
+      track('match_created', {
+        overs: Number(overs),
+        players: playersA.length + playersB.length + commonSize * 2,
+        boomBoom,
+        toss: battingFirst === 'toss',
+        common: Boolean(common),
+        located: Boolean(location),
       });
       router.push(battingFirst === 'toss' ? `/toss/${id}` : `/umpire/${id}`);
     } catch (err) {
