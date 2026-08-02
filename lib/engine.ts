@@ -119,6 +119,35 @@ export interface BoomOverEvent {
   at?: number;
 }
 
+// ---------- Corrections + mid-match common player (v15) ----------
+
+// Swap which of the two current batsmen is on strike — a scorer correction
+// for a mis-tapped opener / strike mix-up. Valid while live with both
+// batsmen at the crease (including between overs); undo reverts it.
+export interface SwapStrikeEvent {
+  type: 'swap_strike';
+  at?: number;
+}
+
+// Replace the selected bowler for the over about to start — only until the
+// over's first delivery (legal OR illegal). Same eligibility rules as
+// select_bowler; a freshly created all-zero bowlers[] entry from the
+// mis-selection is dropped so scorecards never show a phantom 0-ball spell.
+export interface ChangeBowlerEvent {
+  type: 'change_bowler';
+  playerIndex: number;
+  at?: number;
+}
+
+// Add a latecomer who plays for BOTH sides (the gully odd-headcount rule)
+// mid-match. Only when config.commonPlayer is not already set; validated
+// against both teams like add_player, pushed onto both rosters.
+export interface AddCommonPlayerEvent {
+  type: 'add_common_player';
+  name: string;
+  at?: number;
+}
+
 export type MatchEvent =
   | TossEvent
   | StartInningsEvent
@@ -129,7 +158,10 @@ export type MatchEvent =
   | EndMatchEvent
   | AddPlayerEvent
   | RemovePlayerEvent
-  | BoomOverEvent;
+  | BoomOverEvent
+  | SwapStrikeEvent
+  | ChangeBowlerEvent
+  | AddCommonPlayerEvent;
 
 // The store implements undo by popping the event log; if a bare undo event
 // ever reaches the engine it throws 'nothing to undo'.
@@ -362,6 +394,9 @@ export function applyEvent(state: MatchState, event: MatchEvent | UndoEvent): Ma
     case 'add_player': doAddPlayer(s, event); break;
     case 'remove_player': doRemovePlayer(s, event); break;
     case 'boom_over': doBoomOver(s, event); break;
+    case 'swap_strike': doSwapStrike(s); break;
+    case 'change_bowler': doChangeBowler(s, event); break;
+    case 'add_common_player': doAddCommonPlayer(s, event); break;
     case 'undo': throw new Error('nothing to undo');
     default: throw new Error(`unknown event type: ${(event as { type: string }).type}`);
   }
@@ -804,6 +839,93 @@ function doBoomOver(s: MatchState, event: BoomOverEvent): void {
     if (!ins.boomActive) throw new Error('boom over is not armed');
     ins.boomActive = false;
   }
+}
+
+// ---------- corrections + mid-match common player (v15) ----------
+
+function doSwapStrike(s: MatchState): void {
+  if (s.status !== 'live') throw new Error('no innings in progress');
+  const ins = cur(s);
+  if (ins.strikerIndex === null || ins.nonStrikerIndex === null) {
+    throw new Error('both batsmen must be at the crease to swap strike');
+  }
+  swapStrike(ins);
+}
+
+function doChangeBowler(s: MatchState, event: ChangeBowlerEvent): void {
+  if (s.status !== 'live') throw new Error('no innings in progress');
+  const ins = cur(s);
+  if (ins.currentBowlerIndex === null) throw new Error('no bowler selected for this over');
+  // Only a selection correction: once any delivery (legal or illegal) has
+  // been bowled, the over belongs to the selected bowler.
+  if (ins._ballsThisOver !== 0) {
+    throw new Error('bowler can only be changed before the over starts');
+  }
+  const bowlingTeamIndex = 1 - ins.battingTeamIndex;
+  const players = s.config.teams[bowlingTeamIndex].players;
+  const { playerIndex } = event;
+  if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= players.length) {
+    throw new Error('invalid bowler playerIndex');
+  }
+  const current = ins.bowlers[ins.currentBowlerIndex];
+  if (current.playerIndex === playerIndex) throw new Error('that bowler is already selected');
+  if (s.removed[bowlingTeamIndex].includes(playerIndex)) {
+    throw new Error('player is no longer available');
+  }
+  if (playerIndex === ins._lastOverBowler) {
+    throw new Error('same bowler cannot bowl consecutive overs');
+  }
+  // If the mis-selection created the outgoing bowler's entry (all-zero, and
+  // necessarily last — select_bowler pushes at the end and nothing has been
+  // bowled since), drop it so the scorecard never shows a phantom 0-ball
+  // spell. A bowler with an earlier spell keeps their row.
+  if (ins.currentBowlerIndex === ins.bowlers.length - 1
+      && current.balls === 0 && current.runs === 0
+      && current.wickets === 0 && current.maidens === 0) {
+    ins.bowlers.pop();
+  }
+  let bi = ins.bowlers.findIndex((b) => b.playerIndex === playerIndex);
+  if (bi === -1) {
+    ins.bowlers.push({
+      playerIndex,
+      name: players[playerIndex],
+      balls: 0,
+      maidens: 0,
+      runs: 0,
+      wickets: 0,
+    });
+    bi = ins.bowlers.length - 1;
+  }
+  ins.currentBowlerIndex = bi;
+}
+
+function doAddCommonPlayer(s: MatchState, event: AddCommonPlayerEvent): void {
+  if (s.status === 'completed') throw new Error('cannot change the squad after the match is completed');
+  if (s.config.commonPlayer != null) {
+    throw new Error(`${s.config.commonPlayer} already plays for both sides`);
+  }
+  if (typeof event.name !== 'string') throw new Error('player name must be a non-empty string');
+  const name = event.name.trim().replace(/\s+/g, ' ');
+  if (name === '') throw new Error('player name must be a non-empty string');
+  const lower = name.toLowerCase();
+  // Same rules as add_player, but against BOTH teams — the name must be free
+  // of active clashes and both squads must have room.
+  for (const t of [0, 1] as const) {
+    const team = s.config.teams[t];
+    const removed = s.removed[t];
+    if (team.players.some((p, i) => !removed.includes(i) && p.toLowerCase() === lower)) {
+      throw new Error(`${name} is already in ${team.name}`);
+    }
+    if (activeCount(s, t) >= 11) {
+      throw new Error(`${team.name} already has 11 active players`);
+    }
+  }
+  // Push at the end of both rosters (indexes never shift) and record who the
+  // common player is — from here they behave exactly like the create-time
+  // common player: just another index per team, "both sides" badge in UIs.
+  s.config.teams[0].players.push(name);
+  s.config.teams[1].players.push(name);
+  s.config.commonPlayer = name;
 }
 
 // ---------- helpers ----------

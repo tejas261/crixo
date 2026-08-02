@@ -83,6 +83,7 @@ export default function UmpirePage() {
   const [selectedExtra, setSelectedExtra] = useState<PadExtra | null>(null); // null | 'wide' | 'noball' | 'bye' | 'legbye'
   const [wicketOpen, setWicketOpen] = useState(false);
   const [squadsOpen, setSquadsOpen] = useState(false);
+  const [changeBowlerOpen, setChangeBowlerOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'endInnings' | 'endMatch' | null>(null); // null | 'endInnings' | 'endMatch'
   const [completedDismissed, setCompletedDismissed] = useState(false); // completed sheet shows once, then stays closed
   const [posting, setPosting] = useState(false);
@@ -111,6 +112,7 @@ export default function UmpirePage() {
     setCompletedDismissed(false);
     setKeyFallback(null);
     setSquadsOpen(false);
+    setChangeBowlerOpen(false);
     fetchJSON<RoleResponse>(`/api/matches/${matchId}/role`)
       .then((role) => {
         if (cancelled) return;
@@ -187,8 +189,9 @@ export default function UmpirePage() {
     if (n.newBowler) return `newBowler:${i?.legalBalls}`;
     if (confirmAction) return `confirm:${confirmAction}`;
     if (wicketOpen) return 'wicket';
+    if (changeBowlerOpen) return 'changeBowler';
     return null;
-  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, i]);
+  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, changeBowlerOpen, i]);
 
   // A sheet the umpire may close without acting (Escape / backdrop). Needs-
   // driven sheets are not dismissible, but each carries its own Undo footer
@@ -196,6 +199,7 @@ export default function UmpirePage() {
   const dismissHandler = useMemo<(() => void) | undefined>(() => {
     if (sheetKey === 'wicket') return () => setWicketOpen(false);
     if (sheetKey === 'squads') return () => setSquadsOpen(false);
+    if (sheetKey === 'changeBowler') return () => setChangeBowlerOpen(false);
     if (sheetKey?.startsWith('confirm:')) return () => setConfirmAction(null);
     if (sheetKey === 'completed') return () => setCompletedDismissed(true);
     return undefined;
@@ -381,6 +385,17 @@ export default function UmpirePage() {
         />
       );
     }
+    if (sheetKey === 'changeBowler') {
+      return (
+        <ChangeBowlerSheet
+          key={sheetKey}
+          state={state}
+          innings={i!}
+          postEvent={postEvent}
+          onClose={() => setChangeBowlerOpen(false)}
+        />
+      );
+    }
     if (sheetKey === 'wicket') {
       return (
         <WicketSheet
@@ -459,16 +474,47 @@ export default function UmpirePage() {
           <>
             <BatterCard innings={i} batsmanIndex={i.strikerIndex} onStrike commonName={state?.config.commonPlayer ?? null} />
             <BatterCard innings={i} batsmanIndex={i.nonStrikerIndex} onStrike={false} commonName={state?.config.commonPlayer ?? null} />
+            {/* Correction: swap who is on strike (engine swap_strike — valid
+                whenever both batsmen are at the crease, undoable). */}
+            {scorer && state?.status === 'live'
+              && i.strikerIndex != null && i.nonStrikerIndex != null && (
+              <div className="cards-actions">
+                <button
+                  className="btn-quiet"
+                  disabled={posting}
+                  onClick={() => postEvent({ type: 'swap_strike' })}
+                >
+                  Swap strike
+                </button>
+              </div>
+            )}
           </>
         )}
       </section>
       <section className="player-cards" aria-label="Bowler">
         {i && state?.status !== 'setup' && (
-          <BowlerCard
-            bowler={i.currentBowlerIndex != null ? i.bowlers[i.currentBowlerIndex] : null}
-            waitingText="Waiting for a bowler…"
-            commonName={state?.config.commonPlayer ?? null}
-          />
+          <>
+            <BowlerCard
+              bowler={i.currentBowlerIndex != null ? i.bowlers[i.currentBowlerIndex] : null}
+              waitingText="Waiting for a bowler…"
+              commonName={state?.config.commonPlayer ?? null}
+            />
+            {/* Correction: re-pick the bowler before the over's first ball.
+                legalBalls % 6 === 0 is the same heuristic as the boom chip —
+                the server 400s (toast) if a wide already opened the over. */}
+            {scorer && state?.status === 'live'
+              && i.currentBowlerIndex != null && i.legalBalls % 6 === 0 && (
+              <div className="cards-actions">
+                <button
+                  className="btn-quiet"
+                  disabled={posting}
+                  onClick={() => setChangeBowlerOpen(true)}
+                >
+                  Change bowler
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -900,6 +946,54 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
   );
 }
 
+// ---------- Change bowler (v15 correction) ----------
+
+interface ChangeBowlerSheetProps {
+  state: PublicState;
+  innings: PublicInnings;
+  postEvent: PostEvent;
+  onClose: () => void;
+}
+
+// Re-pick the bowler for the over about to start (engine change_bowler —
+// same eligibility as select_bowler; rejected once the over has a delivery).
+function ChangeBowlerSheet({ state, innings, postEvent, onClose }: ChangeBowlerSheetProps) {
+  const removed = state.removed[1 - innings.battingTeamIndex] ?? [];
+  const bowl = state.config.teams[1 - innings.battingTeamIndex].players
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !removed.includes(idx));
+  const prev = innings.lastOverBowlerPlayerIndex ?? null;
+  const current = innings.currentBowlerIndex != null
+    ? innings.bowlers[innings.currentBowlerIndex].playerIndex
+    : null;
+  return (
+    <>
+      <h2>Change bowler</h2>
+      <p className="sheet-sub">
+        Re-pick who bowls this over — allowed until the first ball is bowled.
+      </p>
+      <div className="pick-list">
+        {bowl.map(({ p, idx }) => (
+          <PickButton
+            key={idx} name={p} role="bowler"
+            disabled={idx === prev || idx === current}
+            note={idx === current
+              ? 'currently selected'
+              : idx === prev ? 'bowled the last over' : null}
+            onClick={async () => {
+              if (await postEvent({ type: 'change_bowler', playerIndex: idx })) onClose();
+            }}
+          />
+        ))}
+      </div>
+      <div className="pad-footer">
+        <span />
+        <button className="btn-quiet" onClick={onClose}>Cancel</button>
+      </div>
+    </>
+  );
+}
+
 // ---------- Squads (v14 mid-match squad changes) ----------
 
 interface SquadsSheetProps {
@@ -914,6 +1008,19 @@ interface SquadsSheetProps {
 // but the server stays the authority — a rejected event's 400 message
 // surfaces as a toast via postEvent.
 function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
+  const [commonName, setCommonName] = useState('');
+  // Mid-match common player (v15): only when none exists yet, and only while
+  // both squads have room — mirrors the engine guards, server authoritative.
+  const bothHaveRoom = ([0, 1] as const).every(
+    (t) => state.config.teams[t].players.length - (state.removed[t] ?? []).length < 11,
+  );
+
+  async function addCommon() {
+    const v = commonName.trim().replace(/\s+/g, ' ');
+    if (!v) return;
+    if (await postEvent({ type: 'add_common_player', name: v })) setCommonName('');
+  }
+
   return (
     <>
       <h2>Squads</h2>
@@ -924,6 +1031,35 @@ function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
         <SquadColumn state={state} teamIndex={0} postEvent={postEvent} posting={posting} />
         <SquadColumn state={state} teamIndex={1} postEvent={postEvent} posting={posting} />
       </div>
+      {state.config.commonPlayer == null && (
+        <>
+          <div className="sheet-section-label">Common player — plays for both sides</div>
+          <div className="squad-add">
+            <input
+              type="text"
+              value={commonName}
+              placeholder="Odd headcount? Add them to both squads"
+              aria-label="Add a common player to both teams"
+              maxLength={40}
+              autoComplete="off"
+              disabled={!bothHaveRoom}
+              onChange={(e) => setCommonName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addCommon(); } }}
+            />
+            <button
+              type="button"
+              className="btn roster-add"
+              disabled={!bothHaveRoom || !commonName.trim() || posting}
+              onClick={() => { void addCommon(); }}
+            >
+              Add
+            </button>
+          </div>
+          {!bothHaveRoom && (
+            <p className="roster-hint">Both squads need room — 11 active players max.</p>
+          )}
+        </>
+      )}
       <div className="pad-footer">
         <span />
         <button className="btn-quiet" onClick={onClose}>Close</button>

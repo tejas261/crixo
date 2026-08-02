@@ -1709,6 +1709,16 @@ a.btn-google:hover { text-decoration: none; }
 .squad-add { display: flex; gap: 8px; margin-top: 8px; }
 .squad-add input { flex: 1; min-width: 0; }
 
+/* ---------- Card correction actions (v15: swap strike / change bowler) ---------- */
+
+/* A quiet right-aligned action row hanging off the batsmen/bowler cards. */
+.cards-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+.cards-actions .btn-quiet { padding: 4px 10px; font-size: 13px; }
+
 /* ---------- Reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {

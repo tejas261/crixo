@@ -116,6 +116,31 @@ export interface BoomOverEvent {
   at?: number;
 }
 
+// ---------- Corrections + mid-match common player (v15) ----------
+
+// Swap which of the two current batsmen is on strike (scorer correction).
+// Valid while live with both batsmen at the crease.
+export interface SwapStrikeEvent {
+  type: 'swap_strike';
+  at?: number;
+}
+
+// Replace the selected bowler before the over's first delivery (legal or
+// illegal). Same eligibility rules as select_bowler.
+export interface ChangeBowlerEvent {
+  type: 'change_bowler';
+  playerIndex: number;
+  at?: number;
+}
+
+// Add a latecomer who plays for BOTH sides, mid-match. Only when
+// config.commonPlayer is not already set.
+export interface AddCommonPlayerEvent {
+  type: 'add_common_player';
+  name: string;
+  at?: number;
+}
+
 export type MatchEvent =
   | TossEvent
   | StartInningsEvent
@@ -126,7 +151,10 @@ export type MatchEvent =
   | EndMatchEvent
   | AddPlayerEvent
   | RemovePlayerEvent
-  | BoomOverEvent;
+  | BoomOverEvent
+  | SwapStrikeEvent
+  | ChangeBowlerEvent
+  | AddCommonPlayerEvent;
 
 // The store implements undo by popping the event log.
 export interface UndoEvent {

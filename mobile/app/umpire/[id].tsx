@@ -95,6 +95,7 @@ export default function UmpireScreen() {
   const [selectedExtra, setSelectedExtra] = useState<PadExtra | null>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
   const [squadsOpen, setSquadsOpen] = useState(false);
+  const [changeBowlerOpen, setChangeBowlerOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'endInnings' | 'endMatch' | null>(null);
   const [completedDismissed, setCompletedDismissed] = useState(false); // completed sheet shows once, then stays closed
   const [posting, setPosting] = useState(false);
@@ -181,12 +182,14 @@ export default function UmpireScreen() {
     if (n.newBowler) return `newBowler:${i?.legalBalls}`;
     if (confirmAction) return `confirm:${confirmAction}`;
     if (wicketOpen) return 'wicket';
+    if (changeBowlerOpen) return 'changeBowler';
     return null;
-  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, i]);
+  }, [state, scorer, completedDismissed, squadsOpen, confirmAction, wicketOpen, changeBowlerOpen, i]);
 
   const dismissHandler = useMemo<(() => void) | undefined>(() => {
     if (sheetKey === 'wicket') return () => setWicketOpen(false);
     if (sheetKey === 'squads') return () => setSquadsOpen(false);
+    if (sheetKey === 'changeBowler') return () => setChangeBowlerOpen(false);
     if (sheetKey?.startsWith('confirm:')) return () => setConfirmAction(null);
     if (sheetKey === 'completed') return () => setCompletedDismissed(true);
     return undefined;
@@ -418,6 +421,17 @@ export default function UmpireScreen() {
         />
       );
     }
+    if (sheetKey === 'changeBowler') {
+      return (
+        <ChangeBowlerSheet
+          key={sheetKey}
+          state={state}
+          innings={i!}
+          postEvent={postEvent}
+          onClose={() => setChangeBowlerOpen(false)}
+        />
+      );
+    }
     if (sheetKey === 'wicket') {
       return (
         <WicketSheet
@@ -500,12 +514,35 @@ export default function UmpireScreen() {
                   <BatterCard innings={i} batsmanIndex={i.nonStrikerIndex} onStrike={false} commonName={state?.config.commonPlayer ?? null} />
                 </>
               )}
+              {/* Correction: swap who is on strike (engine swap_strike —
+                  valid whenever both batsmen are at the crease, undoable). */}
+              {scorer && state?.status === 'live' && i
+                && i.strikerIndex != null && i.nonStrikerIndex != null && (
+                <View style={styles.cardsActions}>
+                  <Btn
+                    title="Swap strike" variant="quiet" disabled={posting}
+                    onPress={() => postEvent({ type: 'swap_strike' })}
+                  />
+                </View>
+              )}
               {i && state?.status !== 'setup' && (
                 <BowlerCard
                   bowler={i.currentBowlerIndex != null ? i.bowlers[i.currentBowlerIndex] : null}
                   waitingText="Waiting for a bowler…"
                   commonName={state?.config.commonPlayer ?? null}
                 />
+              )}
+              {/* Correction: re-pick the bowler before the over's first ball.
+                  Same over-boundary heuristic as the boom chip — the server
+                  400s (toast) if a wide already opened the over. */}
+              {scorer && state?.status === 'live' && i
+                && i.currentBowlerIndex != null && i.legalBalls % 6 === 0 && (
+                <View style={styles.cardsActions}>
+                  <Btn
+                    title="Change bowler" variant="quiet" disabled={posting}
+                    onPress={() => setChangeBowlerOpen(true)}
+                  />
+                </View>
               )}
             </View>
 
@@ -843,6 +880,47 @@ function NewBowlerSheet({ state, innings, postEvent, undoFooter }: NewPlayerShee
   );
 }
 
+// ---------- Change bowler sheet (v15 correction) ----------
+
+// Re-pick the bowler for the over about to start (engine change_bowler —
+// same eligibility as select_bowler; rejected once the over has a delivery).
+function ChangeBowlerSheet({ state, innings, postEvent, onClose }: {
+  state: PublicState;
+  innings: PublicInnings;
+  postEvent: PostEvent;
+  onClose: () => void;
+}) {
+  const bowl = activePlayers(state, 1 - innings.battingTeamIndex);
+  const prev = innings.lastOverBowlerPlayerIndex ?? null;
+  const current = innings.currentBowlerIndex != null
+    ? innings.bowlers[innings.currentBowlerIndex].playerIndex
+    : null;
+  return (
+    <View>
+      <SheetTitle>Change bowler</SheetTitle>
+      <SheetSub>Re-pick who bowls this over — allowed until the first ball is bowled.</SheetSub>
+      <View style={styles.pickList}>
+        {bowl.map(({ p, idx }) => (
+          <PickButton
+            key={idx} name={p} role="bowler"
+            disabled={idx === prev || idx === current}
+            note={idx === current
+              ? 'currently selected'
+              : idx === prev ? 'bowled the last over' : null}
+            onClick={async () => {
+              if (await postEvent({ type: 'change_bowler', playerIndex: idx })) onClose();
+            }}
+          />
+        ))}
+      </View>
+      <View style={styles.sheetFooter}>
+        <View />
+        <Btn title="Cancel" variant="quiet" onPress={onClose} />
+      </View>
+    </View>
+  );
+}
+
 // ---------- Squads sheet (v14 mid-match squad changes) ----------
 
 interface SquadsSheetProps {
@@ -858,6 +936,19 @@ interface SquadsSheetProps {
 // authority — a rejected event's 400 message surfaces as a toast via
 // postEvent.
 function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
+  const [commonDraft, setCommonDraft] = useState('');
+  const cleanCommon = commonDraft.trim().replace(/\s+/g, ' ');
+  // Mid-match common player (v15): only when none exists yet, and only while
+  // both squads have room — mirrors the engine guards, server authoritative.
+  const bothHaveRoom = ([0, 1] as const).every(
+    (t) => state.config.teams[t].players.length - (state.removed?.[t] ?? []).length < 11,
+  );
+
+  async function addCommon() {
+    if (!cleanCommon || !bothHaveRoom) return;
+    if (await postEvent({ type: 'add_common_player', name: cleanCommon })) setCommonDraft('');
+  }
+
   return (
     <View>
       <SheetTitle>Squads</SheetTitle>
@@ -865,6 +956,32 @@ function SquadsSheet({ state, postEvent, posting, onClose }: SquadsSheetProps) {
       {([0, 1] as const).map((t) => (
         <SquadTeam key={t} state={state} teamIndex={t} postEvent={postEvent} posting={posting} />
       ))}
+      {state.config.commonPlayer == null && (
+        <View style={{ marginTop: 4 }}>
+          <SheetSectionLabel>Common player — plays for both sides</SheetSectionLabel>
+          <View style={styles.rowGap}>
+            <Input
+              placeholder="Odd headcount? Add them to both squads"
+              value={commonDraft}
+              onChangeText={setCommonDraft}
+              onSubmitEditing={addCommon}
+              editable={bothHaveRoom}
+              maxLength={40}
+              autoCorrect={false}
+              returnKeyType="done"
+              style={{ flex: 1 }}
+            />
+            <Btn
+              title="Add" small
+              disabled={!cleanCommon || !bothHaveRoom || posting}
+              onPress={addCommon}
+            />
+          </View>
+          {!bothHaveRoom && (
+            <Hint style={{ marginTop: 6 }}>Both squads need room — 11 active players max.</Hint>
+          )}
+        </View>
+      )}
       <View style={styles.sheetFooter}>
         <View />
         <Btn title="Close" variant="quiet" onPress={onClose} />
@@ -1112,6 +1229,10 @@ const styles = StyleSheet.create({
   context: { color: colors.muted, fontSize: 14, marginTop: 2 },
   contextStrong: { color: colors.text, fontWeight: '600' },
   cards: { gap: 10 },
+  // Quiet right-aligned correction actions hanging off the player cards
+  // (v15: swap strike / change bowler). Negative margin tucks them under
+  // the card they belong to despite the parent's gap.
+  cardsActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: -6 },
   placeholderCard: {
     backgroundColor: colors.panel,
     borderWidth: 1,
